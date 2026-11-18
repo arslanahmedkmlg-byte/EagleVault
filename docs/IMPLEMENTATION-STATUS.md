@@ -46,3 +46,13 @@ Last updated: 2026-11-19
 - The Web transport's five Node built-in tests pass using Node's TypeScript strip mode.
 - Java/JDK is not installed on the device, so Android Gradle builds cannot currently run there.
 - The Web workspace declares pnpm 12.18.0; dependency installation and full application build have not yet been attempted.
+
+## Android API adapter milestone
+- Added the isolated Gradle module pass:eaglevault:api under android/upstream.
+- Added Retrofit endpoints for sync, cipher CRUD and folder CRUD.
+- Added a factory that requires HTTPS except localhost and disables HTTP/HTTPS redirects.
+- Authorization is passed explicitly per request; the module does not reuse Proton authentication interceptors.
+- Android module compilation remains unverified because the device has no JDK.
+
+## Source audit conclusion
+The imported Proton Web API factory calls Proton shared API configuration and protonFetch; the Proton crypto manager is hydrated with Proton user/address keys and share managers; Proton sync dispatches through Proton legacy or user-event sync strategies. These are architectural dependencies, not just branding or endpoint URLs. The Vaultwarden adapter must replace the API/auth/data/crypto/sync boundaries, while retaining UI only where its domain model can be safely mapped.

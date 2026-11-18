@@ -1,11 +1,13 @@
 # Android client
 
-The full Proton Pass Android source snapshot is in upstream/. EagleVault-specific integration must preserve upstream GPL-3.0 notices and should be introduced behind isolated API, crypto, data and session interfaces.
+The full Proton Pass Android source snapshot is in upstream/. EagleVault's first Android adapter module is upstream/pass/eaglevault/api.
 
 Current state:
-- Upstream Android source imported; no source changes made to it yet.
-- Java/JDK is not installed on the development device, so Gradle builds have not been run.
-- Vaultwarden transport/API contract exists in shared/contracts/bitwarden-api.ts.
+- Upstream Android source imported; original files remain unmodified except the new module include in settings.gradle.kts.
+- Added an isolated Retrofit/OkHttp API interface for Vaultwarden sync, cipher CRUD and folder CRUD.
+- Bearer token is supplied explicitly by the caller; no Proton auth or API host is reused.
+- Request bodies are raw encrypted JSON. Login, token refresh, serialization, crypto, persistence and UI wiring remain future work.
+- Java/JDK is not installed on the development device, so Gradle compilation has not been run.
 - Android must implement the same Bitwarden-compatible KDF, key hierarchy and cipher format as Web, verified with shared golden vectors.
 
-Do not wire Proton Core authentication or the Proton API host into the Vaultwarden adapter. Review and replace those boundaries deliberately. Source commit: docs/UPSTREAM-IMPORTS.md.
+See docs/UPSTREAM-IMPORTS.md for source commit attribution.

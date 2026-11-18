@@ -93,6 +93,7 @@ if (passCommonLocalDir?.isDirectory == true) {
 }
 
 include(":app")
+include(":pass:eaglevault:api")
 include(":appmacrobenchmark")
 include(":pass:account:api")
 include(":pass:account:fakes")
