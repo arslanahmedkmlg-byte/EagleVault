@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+message AuthenticatorEntryContentTotp {
+  string uri = 1;
+}
+
+message AuthenticatorEntryContentSteam {
+  string secret = 1;
+}
+
+message AuthenticatorEntryContent {
+  oneof content {
+      AuthenticatorEntryContentTotp totp = 1;
+      AuthenticatorEntryContentSteam steam = 2;
+  }
+}
+
+message AuthenticatorEntryMetadata {
+  string name = 1;
+  string note = 2;
+  string id = 3;
+}
+
+message AuthenticatorEntry {
+  AuthenticatorEntryMetadata metadata = 1;
+  AuthenticatorEntryContent content = 2;
+}

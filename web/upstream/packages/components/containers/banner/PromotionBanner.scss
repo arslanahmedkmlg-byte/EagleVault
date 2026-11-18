@@ -1,0 +1,62 @@
+@use '~@proton/styles/scss/lib/config' as *;
+
+.bg-promotion {
+	&-gradient-horizontal {
+		background: linear-gradient(85.16deg, var(--promotion-background-start) 0%, var(--promotion-background-end) 100%);
+	}
+
+	&-gradient-vertical {
+		background: linear-gradient(0deg, var(--promotion-background-start) 0%, var(--promotion-background-end) 100%);
+	}
+
+	&-text {
+		color: var(--promotion-text-weak);
+	}
+
+	// all links/buttons should behave the same
+	&-weak,
+	.link,
+	a {
+		&,
+		&:hover,
+		&:active,
+		&:focus {
+			color: var(--promotion-text-color);
+			font-weight: var(--font-weight-semibold);
+		}
+	}
+
+	// solid buttons rendered as links keep their button colors
+	a[class*='button-solid'] {
+		&,
+		&:focus {
+			color: var(--button-default-text-color, inherit);
+			font-weight: inherit;
+		}
+
+		&:hover {
+			color: var(--button-hover-text-color, inherit);
+		}
+
+		&:active {
+			color: var(--button-active-text-color, inherit);
+		}
+	}
+
+	.button-underline-norm {
+		&,
+		&:hover,
+		&:focus,
+		&:focus-within {
+			--button-default-text-color: var(--promotion-text-color);
+			--button-hover-text-color: var(--promotion-text-color);
+
+			font-weight: var(--font-weight-semibold);
+		}
+	}
+
+	// close button
+	.button-ghost-weak {
+		--button-hover-background-color: var(--optional-promotion-interaction-hover);
+	}
+}

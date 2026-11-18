@@ -1,0 +1,91 @@
+import type { DocumentRoleType } from '../Doc/DocumentRole'
+import type { RtsMessagePayload } from '../Doc/RtsMessagePayload'
+import type { EditorInitializationConfig } from '../EditorInitializationConfig'
+import type { DataTypesThatDocumentCanBeExportedAs } from '../ExportableDataType'
+import type { SerializedEditorState } from 'lexical'
+import type { UserSettings } from '@proton/shared/lib/interfaces/UserSettings'
+import type { YjsState } from '../YjsState'
+import type { SyncedEditorEvent, SyncedEditorStateValues } from '../State/SyncedEditorState'
+import type { SheetImportData } from '../SheetImportData'
+
+export interface ClientRequiresEditorMethods {
+  receiveMessage(message: RtsMessagePayload): Promise<void>
+  performOpeningCeremony(): Promise<void>
+  performClosingCeremony(): Promise<void>
+  /** Returns the document Yjs state */
+  getDocumentState(): Promise<YjsState>
+  /** Returns the Lexical state of the editor, unrelated to the Yjs state */
+  getCurrentEditorState(): Promise<SerializedEditorState | undefined>
+  /** Returns all the state in the current Sheet as JSON */
+  getLocalSpreadsheetStateJSON(): Promise<unknown>
+  /** Returns the current Y.Doc as JSON */
+  getYDocAsJSON(): Promise<unknown>
+  /**
+   * Returns the APP_VERSION and COMMIT the editor was built with. The editor can be deployed separately from the
+   * client, so these can differ from the client's own and from the `appVersion` passed to `initializeEditor`.
+   */
+  getEditorBuildInfo(): Promise<{ appVersion: string; commit: string }>
+  /**
+   * A destructive operation that replaces the current editor state with the given state,
+   * used when restoring a document from history
+   */
+  replaceEditorState(state: SerializedEditorState): Promise<void>
+  replaceLocalSpreadsheetState(state: object, broadcastPatches: boolean): Promise<void>
+  /**
+   * Highlights cells in the sheet as added, deleted or modified, or clears the highlighting when passed null.
+   * Used by the update replay debug tool to show what an update changed.
+   */
+  showSpreadsheetCellChanges(
+    changes:
+      | {
+          sheetId: number
+          rowIndex: number
+          columnIndex: number
+          kind: 'added' | 'deleted' | 'modified'
+          valueChanged: boolean
+          formatChanged: boolean
+          textBefore: string
+        }[]
+      | null,
+  ): Promise<void>
+  goToSpreadsheetCell(sheetId: number, rowIndex: number, columnIndex: number): Promise<void>
+  getClientId(): Promise<number>
+  showEditor(): Promise<void>
+  showCommentsPanel(): Promise<void>
+  initializeEditor(
+    documentId: string,
+    userAddress: string,
+    role: DocumentRoleType,
+    isPublicMode: boolean,
+    appVersion: string,
+    editorInitializationConfig?: EditorInitializationConfig,
+  ): Promise<void>
+  handleCommentsChange(): Promise<void>
+  handleTypingStatusChange(threadId: string): Promise<void>
+  handleCreateCommentMarkNode(markID: string): Promise<void>
+  handleRemoveCommentMarkNode(markID: string): Promise<void>
+  handleResolveCommentMarkNode(markID: string): Promise<void>
+  handleUnresolveCommentMarkNode(markID: string): Promise<void>
+  changeLockedState(locked: boolean): Promise<void>
+  broadcastPresenceState(): Promise<void>
+  exportData(format: DataTypesThatDocumentCanBeExportedAs): Promise<Uint8Array<ArrayBuffer>>
+  getCurrentSelection(format: DataTypesThatDocumentCanBeExportedAs): Promise<string | null>
+  printAsPDF(): Promise<void>
+  loadUserSettings(settings: UserSettings): Promise<void>
+  toggleDebugTreeView(): Promise<void>
+  importDataIntoSheet(data: SheetImportData): Promise<void>
+  focusSpreadsheet(): Promise<void>
+  generateSpreadsheetPatches(): Promise<unknown>
+  applyPatches(patches: unknown): Promise<void>
+
+  syncProperty(
+    property: keyof SyncedEditorStateValues,
+    value: SyncedEditorStateValues[keyof SyncedEditorStateValues],
+  ): Promise<void>
+  syncEvent(event: SyncedEditorEvent): Promise<void>
+
+  markImportUpdateAsSuccessful(uuid: string): Promise<void>
+
+  setTableOfContentsVisible(visible: boolean): Promise<void>
+  setDarkMode(isDarkMode: boolean): Promise<void>
+}

@@ -1,0 +1,153 @@
+import type { ComponentType, ReactNode } from 'react';
+
+import type { LumoApiModelTier } from '@proton/lumo-api-client/core/chat-completions';
+import type { ToolName as ServerToolName } from '@proton/lumo-api-client/core/types';
+import type { LumoClientType } from '@proton/lumo-api-client/types-api';
+import type { ServerToolSource } from '@proton/lumo-ui/shared-components/ServerToolChip/ServerToolChip';
+import type { WelcomeSuggestionCard } from '@proton/lumo-ui/shared-components/WelcomeSuggestions/WelcomeSuggestions';
+import type { IconComponent } from '@proton/lumo-ui/types/IconComponent';
+
+import type {
+    ActionRequest,
+    FixedReference,
+    ReferenceLabels,
+    ReferenceRegistry,
+    ToolDefinition,
+    ToolHandlers,
+    ToolName,
+} from '../contracts/types';
+
+/** `APPLYING` exists so the tile can record the outcome rather than the click that started it. */
+export enum ConfirmStatus {
+    PENDING = 'pending',
+    APPLYING = 'applying',
+    APPLIED = 'applied',
+    FAILED = 'failed',
+    CANCELLED = 'cancelled',
+}
+
+/** The chat items the panel renders — the human-facing view of the executor's event stream. */
+export type LumoAgentItem =
+    | { id: number; kind: 'user'; text: string }
+    | { id: number; kind: 'reply'; text: string }
+    | { id: number; kind: 'chip'; tool: ToolName; label: string; payload: string }
+    | { id: number; kind: 'servertool'; tool: ServerToolName; sources: ServerToolSource[] }
+    | {
+          id: number;
+          kind: 'confirm';
+          action: ActionRequest;
+          labels: ReferenceLabels;
+          status: ConfirmStatus;
+          references?: CardReferences;
+      }
+    | { id: number; kind: 'error'; message: string };
+
+/** The part of the session's reference registry a confirm-card body may use. */
+export type CardReferences = Pick<ReferenceRegistry, 'idFor' | 'referenceFor'>;
+
+/** Props a bespoke confirm-card body receives; it edits `params` and reports changes via `onChange`. */
+export interface CardBodyProps {
+    action: ActionRequest;
+    labels: ReferenceLabels;
+    params: Record<string, any>;
+    onChange: (params: Record<string, any>) => void;
+    /**
+     * Lets a body offer choices the model did not propose, by resolving a proposed reference to its
+     * real ID and minting one for the user's pick.
+     */
+    references?: CardReferences;
+}
+
+/**
+ * How one tool's confirm card + settled result tile render. A product registers one per mutation; a
+ * renderer may mount a shared body from `@proton/lumo-ui` or a bespoke one. Reads need no renderer.
+ */
+export interface CardRenderer {
+    icon: IconComponent;
+    /**
+     * What is about to happen, as one line: "Move 3 emails to Travel". The `action` this is handed
+     * carries the params the user is looking at *now*, not the ones the model proposed, so a sentence
+     * that counts a selection counts what Confirm would apply.
+     */
+    sentence: (action: ActionRequest, labels: ReferenceLabels) => ReactNode;
+    /** Optional editable body; omit for a plain confirm (sentence + apply/cancel only). */
+    renderBody?: (props: CardBodyProps) => ReactNode;
+    /** Whether the body's current `params` are applyable; false disables Confirm (e.g. nothing selected). */
+    canApply?: (params: Record<string, any>) => boolean;
+    /** Optional one-line detail shown on the settled result tile. */
+    detail?: (action: ActionRequest, labels: ReferenceLabels) => string | undefined;
+}
+
+export type CardRenderers = Partial<Record<ToolName, CardRenderer>>;
+
+/** Label + icon for a server tool's chip, supplied by the product (the framework stays word-blind). */
+export interface ServerToolMeta {
+    /** Called at render, not at config time, so the wording follows an in-session language change. */
+    label: () => string;
+    icon: ComponentType<{ className?: string }>;
+}
+
+/**
+ * How an assistant turn ended. Finer-grained than any one host's event vocabulary on purpose: the hook
+ * reports what happened, and how that maps onto reportable events is the host's business.
+ */
+export enum LumoChainEnd {
+    SUCCEEDED = 'succeeded',
+    FAILED = 'failed',
+    /** The user stopped it. Distinct from {@link DISCARDED}: they wanted the answer and gave up on it. */
+    STOPPED = 'stopped',
+    REPLACED = 'replaced',
+    /** The conversation it belonged to went away: cleared, or the panel unmounted under it. */
+    DISCARDED = 'discarded',
+    /** The backend refused the conversation because it no longer fits the model's context window. */
+    CONTEXT_LIMIT = 'context_limit',
+}
+
+export enum LumoConfirmAnswer {
+    APPLIED = 'applied',
+    CANCELLED = 'cancelled',
+    ABANDONED = 'abandoned',
+}
+
+/** Lifecycle facts the hook alone can see. The host decides what, if anything, to report. */
+export interface LumoAgentTelemetry {
+    promptSent: () => void;
+    chainEnded: (end: LumoChainEnd, stats: { durationMs: number; toolCalls: number }) => void;
+    confirmAnswered: (tool: ToolName, answer: LumoConfirmAnswer) => void;
+}
+
+/** Everything a product supplies to stand up its assistant — no framework edit needed to add a product. */
+export interface LumoAgentConfig {
+    definitions: ToolDefinition[];
+    handlers: ToolHandlers;
+    cardRenderers?: CardRenderers;
+    /** A callback so rules can follow what is on screen. Called once per message sent. */
+    productRules?: () => string;
+    /**
+     * The Lumo backend supplies this product's whole system prompt (chosen by {@link clientType}), so no system
+     * turn is sent: no protocol base, no {@link productRules}. Switches on standalone-prompt mode.
+     */
+    serverPrompt?: boolean;
+    /**
+     * Standalone-prompt mode only: prepended to each user message the model reads, so the turn carries the moment it was sent.
+     * Gets the session's registry, so a reference it names is one the model may pass straight to a tool.
+     */
+    turnContext?: (references: ReferenceRegistry) => string;
+    /** Seeded into each session's registry, so the model can name these places before any read issues them. */
+    fixedReferences?: FixedReference[];
+    /** Forwarded to the transport as `clientType`. */
+    clientType?: LumoClientType;
+    /** Read once per send and forwarded to the transport as `modelTier`; the transport's default model when absent. */
+    modelTier?: () => LumoApiModelTier;
+    serverTools?: ServerToolName[];
+    serverToolMeta?: Partial<Record<ServerToolName, ServerToolMeta>>;
+    /** Empty-state cards. Omitted by a product that wants no empty state of its own. */
+    suggestions?: WelcomeSuggestionCard[];
+    /** Absent for a host that reports nothing; every call site is then a no-op. */
+    telemetry?: LumoAgentTelemetry;
+    /**
+     * Show Lumo's context-limit toast instead of the inline error when the backend reports
+     * `context_length_exceeded`, and end the chain as {@link LumoChainEnd.CONTEXT_LIMIT}.
+     */
+    showContextLimitToast?: boolean;
+}

@@ -1,0 +1,42 @@
+{
+    "name": "@proton/features",
+    "description": "Feature toggles",
+    "exports": {
+        "./interface": "./interface.ts",
+        "./reducer": "./reducer.ts",
+        "./testing/features": "./testing/features.ts",
+        "./testing/mockUseFeature": "./testing/mockUseFeature.ts",
+        "./testing/vitest/features": "./testing/vitest/features.ts",
+        "./testing/vitest/mockUseFeature": "./testing/vitest/mockUseFeature.ts",
+        "./useFeature": "./useFeature.ts",
+        "./useFeatures": "./useFeatures.ts"
+    },
+    "scripts": {
+        "check:types": "tsc --checkers 1",
+        "lint": "oxlint --quiet",
+        "test": "vitest",
+        "test:ci": "pnpm run test --run"
+    },
+    "dependencies": {
+        "@proton/react-redux-store": "workspace:^",
+        "@proton/redux-utilities": "workspace:^",
+        "@proton/shared": "workspace:^",
+        "@proton/utils": "workspace:^",
+        "@reduxjs/toolkit": "catalog:",
+        "react": "catalog:",
+        "redux-thunk": "catalog:"
+    },
+    "devDependencies": {
+        "@proton/oxlint-config": "workspace:^",
+        "@proton/test-api": "workspace:^",
+        "@proton/vitest-config": "workspace:^",
+        "@types/node": "catalog:",
+        "@types/react": "catalog:",
+        "@types/webpack-env": "catalog:",
+        "@typescript/native": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    }
+}

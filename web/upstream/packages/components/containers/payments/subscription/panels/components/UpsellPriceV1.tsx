@@ -1,0 +1,35 @@
+import { c } from 'ttag';
+
+import Price from '../../../../../components/price/Price';
+import { OfferPrice } from '../../../OfferPrice';
+import type { Upsell } from '../../helpers/dashboard-upsells';
+
+const UpsellPrice = ({ upsell }: { upsell: Upsell }) => {
+    if (!upsell.price) {
+        return null;
+    }
+
+    const { value, currency } = upsell.price;
+
+    if (upsell.plan && upsell.cycle) {
+        return (
+            <OfferPrice
+                key="offer-price"
+                planToCheck={{
+                    currency,
+                    planIDs: upsell.planIDs,
+                    cycle: upsell.cycle,
+                }}
+                suffix={c('new_plans: Plan frequency').t`/month`}
+            />
+        );
+    }
+
+    return (
+        <Price key="plan-price" currency={currency} suffix={c('new_plans: Plan frequency').t`/month`}>
+            {value}
+        </Price>
+    );
+};
+
+export default UpsellPrice;

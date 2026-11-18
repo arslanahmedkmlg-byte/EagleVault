@@ -1,0 +1,17 @@
+# For Gobley
+kotlin_multiplatform = false
+kotlin_targets = ["jvm"]
+kotlin_target_version = "2.0.21"
+generate_serializable_types = true
+
+[bindings.kotlin]
+package_name = "proton.android.authenticator.commonrust"
+cdylib_name = "proton_authenticator_common_mobile"
+
+[bindings.kotlin.external_packages]
+proton_authenticator = "proton.android.authenticator"
+proton_pass_totp = "proton.android.pass.totp"
+
+[bindings.swift]
+module_name = "RustFramework"
+cdylib_name = "proton_authenticator_common_mobile"

@@ -1,0 +1,48 @@
+{
+    "name": "@proton/challenge",
+    "description": "Challenge frame: the component that embeds the sandboxed iframe and forwards interactions to it.",
+    "license": "GPL-3.0",
+    "sideEffects": false,
+    "type": "module",
+    "exports": {
+        "./interface": "./src/shared/interface.ts",
+        "./v4/Challenge": "./src/v4/Challenge.tsx",
+        "./v4/getChallengeSrc": "./src/v4/getChallengeSrc.ts",
+        "./v4/interface": "./src/v4/interface.ts",
+        "./v5/Challenge": "./src/v5/Challenge.tsx",
+        "./v5/getChallengeSrc": "./src/v5/getChallengeSrc.ts",
+        "./v5/interface": "./src/v5/interface.ts"
+    },
+    "scripts": {
+        "check:types": "tsc --checkers 1",
+        "lint": "oxlint --quiet",
+        "test": "TZ=UTC vitest",
+        "test:ci": "TZ=UTC vitest run",
+        "test:watch": "pnpm run test --watch"
+    },
+    "dependencies": {
+        "@proton/utils": "workspace:^"
+    },
+    "devDependencies": {
+        "@proton/oxlint-config": "workspace:^",
+        "@proton/vitest-config": "workspace:^",
+        "@testing-library/dom": "catalog:",
+        "@testing-library/react": "catalog:",
+        "@types/node": "catalog:",
+        "@types/react": "catalog:",
+        "@types/react-dom": "catalog:",
+        "@types/webpack-env": "catalog:",
+        "@typescript/native": "catalog:",
+        "@vitest/coverage-v8": "catalog:",
+        "jsdom": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
+        "react": "catalog:",
+        "react-dom": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    },
+    "peerDependencies": {
+        "react": "^18.3.1"
+    }
+}

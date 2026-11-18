@@ -1,0 +1,18 @@
+import { createOxlintConfig } from '@proton/oxlint-config/createOxlintConfig';
+import { allGlobs } from '@proton/oxlint-config/globs';
+import { refObjectNullOverride } from '@proton/oxlint-config/react19';
+
+export default createOxlintConfig({
+    overrides: [
+        refObjectNullOverride,
+        {
+            files: allGlobs,
+            jsPlugins: ['./lint-rules/index.mjs'],
+            rules: { 'mail-renderer/no-direct-iframe-access': 'error' },
+        },
+        {
+            files: ['**/helpers/getIframeDocument.ts', '**/helpers/getIframeDocument.test.ts'],
+            rules: { 'mail-renderer/no-direct-iframe-access': 'off' },
+        },
+    ],
+});

@@ -1,0 +1,510 @@
+import { c } from 'ttag'
+import type { SquashDocument } from '../UseCase/SquashDocument'
+import type { DuplicateDocument } from '../UseCase/DuplicateDocument'
+import type { CreateNewDocument } from '../UseCase/CreateNewDocument'
+import type { DocumentType, NodeMeta } from '@proton/docs-shared/BasicTypes'
+import type { InternalEventBusInterface } from '@proton/docs-shared/Events/InternalEventBusInterface'
+import type { YjsState } from '@proton/docs-shared/YjsState'
+import { Result } from '@proton/docs-shared/Result'
+import type { AuthenticatedDocControllerInterface } from './AuthenticatedDocControllerInterface'
+import type { SeedInitialCommit } from '../UseCase/SeedInitialCommit'
+import type { VersionHistoryUpdate } from '../VersionHistory/VersionHistoryBatch'
+import { NativeVersionHistory } from '../VersionHistory/NativeVersionHistory'
+import { getVersionHistoryUpdatesFromCommit } from '../VersionHistory/VersionHistoryBatch'
+import { DocControllerEvent } from './AuthenticatedDocControllerEvent'
+
+import type { DocsClientSquashVerificationObjectionMadePayload } from '../Application/ApplicationEvent'
+import { ApplicationEvent, PostApplicationError } from '../Application/ApplicationEvent'
+import {
+  SquashVerificationObjectionDecision,
+  type SquashVerificationObjectionCallback,
+} from '../Types/SquashVerificationObjection'
+import { getPlatformFriendlyDateForFileName } from '@proton/shared/lib/docs/utils/getPlatformFriendlyDateForFileName'
+import { getDefaultDocumentName } from '@proton/shared/lib/docs/utils/isDefaultDocumentName'
+import { MAX_DOC_SIZE } from '../Models/Constants'
+import type { GetNode } from '../UseCase/GetNode'
+import { isDocumentState, type DocumentState } from '../State/DocumentState'
+import type { LoggerInterface } from '@proton/shared/lib/logs'
+import { getErrorString } from '../Util/GetErrorString'
+import { isProtonDocsSpreadsheet } from '@proton/shared/lib/helpers/mimetype'
+import type { DocumentUpdate } from '@proton/docs-proto/Generated/DocumentUpdate'
+import { decompressDocumentUpdate, isCompressedDocumentUpdate } from '../utils/document-update-compression'
+import { WebsocketConnectionEvent } from '../Realtime/WebsocketEvent/WebsocketConnectionEvent'
+import type { WebsocketConnectionEventPayloads } from '../Realtime/WebsocketEvent/WebsocketConnectionEventPayloads'
+import { obfuscateUpdate } from 'yjs'
+import { downloadUpdateTimeline, getUpdateTimeline } from '../utils/create-update-timeline'
+import { getBufferHash } from '../utils/hash'
+import {
+  reportTrashError,
+  restoreDocument as restoreDocumentSDK,
+  trashDocument as trashDocumentSDK,
+} from '../DriveSDK/trash'
+import { generateNodeUid, getDrive } from '@proton/drive/sdk'
+
+/**
+ * Controls the lifecycle of a single document for an authenticated user.
+ */
+export class AuthenticatedDocController implements AuthenticatedDocControllerInterface {
+  isDestroyed = false
+  didTrashDocInCurrentSession = false
+  /** Used for history tracking in Version History */
+  receivedOrSentDUs: VersionHistoryUpdate[] = []
+
+  constructor(
+    private readonly documentState: DocumentState,
+    private _squashDocument: SquashDocument,
+    readonly _createInitialCommit: SeedInitialCommit,
+    private _duplicateDocument: DuplicateDocument,
+    private _createNewDocument: CreateNewDocument,
+    readonly _getNode: GetNode,
+    readonly eventBus: InternalEventBusInterface,
+    readonly logger: LoggerInterface,
+    readonly documentType: DocumentType,
+  ) {
+    this.subscribeToEvents()
+  }
+
+  destroy(): void {
+    this.isDestroyed = true
+  }
+
+  subscribeToEvents(): void {
+    this.documentState.subscribeToProperty('baseCommit', (value) => {
+      if (value && value.needsSquash(this.documentType)) {
+        void this.squashDocument()
+      }
+    })
+
+    this.eventBus.addEventCallback<
+      WebsocketConnectionEventPayloads[WebsocketConnectionEvent.WillPublishDocumentUpdate]
+    >((payload) => {
+      this.receivedOrSentDUs.push({
+        content: payload.content,
+        timestamp: payload.timestamp,
+        authorAddress: payload.authorAddress ?? '',
+      })
+    }, WebsocketConnectionEvent.WillPublishDocumentUpdate)
+
+    this.documentState.subscribeToEvent('CommitInitialConversionContent', (payload) => {
+      if (this.isDestroyed) {
+        return
+      }
+
+      this.logger.info('Committing initial conversion content', payload)
+      void this.handleEditorProvidingInitialConversionContent(payload)
+    })
+
+    this.documentState.subscribeToProperty('baseCommit', (value) => {
+      if (value) {
+        this.receivedOrSentDUs = []
+      }
+    })
+
+    this.documentState.subscribeToEvent('RealtimeReceivedDocumentUpdate', (payload) => {
+      this.receivedOrSentDUs.push(payload)
+    })
+  }
+
+  public getVersionHistory(): NativeVersionHistory | undefined {
+    const baseCommit = this.documentState.getProperty('baseCommit')
+    const updates = [...(baseCommit ? getVersionHistoryUpdatesFromCommit(baseCommit) : []), ...this.receivedOrSentDUs]
+
+    return updates.length > 0 ? new NativeVersionHistory(updates, this.documentType) : undefined
+  }
+
+  async getAllUpdatesAsZip(): Promise<Blob> {
+    const JSZip = (await import('jszip')).default
+    const zip = new JSZip()
+
+    const baseCommit = this.documentState.getProperty('baseCommit')
+    if (baseCommit) {
+      for (const message of baseCommit.messages) {
+        let content = message.content
+        if (isCompressedDocumentUpdate(content)) {
+          content = decompressDocumentUpdate(content)
+        }
+        const hash = await getBufferHash(content)
+        zip.file(`${message.timestamp}-${hash}.bin`, content)
+      }
+    }
+
+    for (const update of this.receivedOrSentDUs) {
+      const hash = await getBufferHash(update.content)
+      zip.file(`${update.timestamp}-${hash}.bin`, update.content)
+    }
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' })
+    return zipBlob
+  }
+
+  async downloadAllUpdatesAsZip(): Promise<void> {
+    const zipBlob = await this.getAllUpdatesAsZip()
+    const zipUrl = URL.createObjectURL(zipBlob)
+    const zipLink = document.createElement('a')
+    zipLink.href = zipUrl
+    zipLink.download = 'all-updates.zip'
+    document.body.appendChild(zipLink)
+    zipLink.click()
+    document.body.removeChild(zipLink)
+    URL.revokeObjectURL(zipUrl)
+  }
+
+  /**
+   *
+   * @param imposeTrashState getNode may return a cached value, due to a race condition with DriveCompat where the node
+   * is removed from cache but done asyncronously. So the refetch below might return a cached value when we are expecting
+   * a fresh reloaded value. This should ultimately be fixed with the DriveCompat but goes too deep into its functionality
+   * to do so.
+   */
+  async refreshNodeAndDocMeta(options: { imposeTrashState: 'trashed' | 'not_trashed' | undefined }): Promise<void> {
+    const { nodeMeta } = this.documentState.getProperty('entitlements')
+
+    const result = await this._getNode.execute(nodeMeta, {
+      useCache: false,
+      forceFetch: true,
+    })
+    if (result.isFailed()) {
+      this.logger.error('Failed to get node', result.getError())
+      // Only the owner can read a trashed node, but the trash or restore itself went through
+      if (options.imposeTrashState) {
+        this.documentState.setProperty('documentTrashState', options.imposeTrashState)
+      }
+      return
+    }
+
+    const { node } = result.getValue()
+    this.documentState.setProperty('decryptedNode', node)
+    this.documentState.setProperty('documentName', node.name)
+
+    if (options.imposeTrashState) {
+      this.documentState.setProperty('documentTrashState', options.imposeTrashState)
+    } else {
+      this.documentState.setProperty('documentTrashState', node.trashed ? 'trashed' : 'not_trashed')
+    }
+  }
+
+  async handleEditorProvidingInitialConversionContent(content: DocumentUpdate): Promise<void> {
+    const byteLength = content.encryptedContent.byteLength
+
+    this.logger.info('Received conversion content from editor, seeding initial commit of size', byteLength)
+
+    this.documentState.emitEvent({
+      name: 'DriveFileConversionToDocBegan',
+      payload: undefined,
+    })
+
+    if (byteLength >= MAX_DOC_SIZE) {
+      this.logger.info('Initial conversion content is too large')
+
+      PostApplicationError(this.eventBus, {
+        translatedError: c('Error')
+          .t`The document you are trying to convert is too large. This may occur if the document has a large number of images or other media. Please try again with a smaller document.`,
+        irrecoverable: true,
+      })
+
+      return
+    }
+
+    const result = await this.createInitialCommit(content)
+
+    if (result.isFailed()) {
+      PostApplicationError(this.eventBus, {
+        translatedError: c('Error').t`An error occurred while attempting to convert the document. Please try again.`,
+        irrecoverable: true,
+      })
+
+      return
+    }
+
+    this.documentState.emitEvent({
+      name: 'DriveFileConversionToDocSucceeded',
+      payload: undefined,
+    })
+  }
+
+  public async debugSendCommitCommandToRTS(): Promise<void> {
+    if (!isDocumentState(this.documentState)) {
+      return
+    }
+
+    this.documentState.emitEvent({
+      name: 'DebugMenuRequestingCommitWithRTS',
+      payload: this.documentState.getProperty('entitlements'),
+    })
+  }
+
+  public async createInitialCommit(content: DocumentUpdate): Promise<Result<unknown>> {
+    if (!isDocumentState(this.documentState)) {
+      throw new Error('Cannot perform createInitialCommit as a public user')
+    }
+
+    const result = await this._createInitialCommit.executeWithUpdate(
+      this.documentState.getProperty('entitlements').nodeMeta,
+      content,
+    )
+
+    if (result.isFailed()) {
+      this.logger.error('Failed to seed document', result.getError())
+    } else {
+      const resultValue = result.getValue()
+      this.documentState.setProperty('currentCommitId', resultValue.commitId)
+    }
+
+    return result
+  }
+
+  public async createInitialCommitFromEditorState(editorState: YjsState): Promise<Result<unknown>> {
+    if (!isDocumentState(this.documentState)) {
+      throw new Error('Cannot perform createInitialCommitFromEditorState as a public user')
+    }
+
+    const result = await this._createInitialCommit.execute(
+      this.documentState.getProperty('entitlements').nodeMeta,
+      editorState,
+      this.documentState.getProperty('entitlements').keys,
+    )
+
+    if (result.isFailed()) {
+      this.logger.error('Failed to seed document', result.getError())
+    } else {
+      const resultValue = result.getValue()
+      this.documentState.setProperty('currentCommitId', resultValue.commitId)
+    }
+
+    return result
+  }
+
+  public async squashDocument(): Promise<void> {
+    if (!isDocumentState(this.documentState)) {
+      throw new Error('Cannot perform squashDocument as a public user')
+    }
+
+    const baseCommit = this.documentState.getProperty('baseCommit')
+    if (!baseCommit) {
+      this.logger.info('No initial commit to squash')
+      return
+    }
+
+    this.logger.info('Squashing document')
+
+    const handleVerificationObjection: SquashVerificationObjectionCallback = async () => {
+      this.eventBus.publish({
+        type: DocControllerEvent.SquashVerificationObjectionDecisionRequired,
+        payload: undefined,
+      })
+
+      return new Promise((resolve) => {
+        const disposer = this.eventBus.addEventCallback((data: DocsClientSquashVerificationObjectionMadePayload) => {
+          disposer()
+          resolve(data.decision)
+        }, ApplicationEvent.SquashVerificationObjectionDecisionMade)
+      })
+    }
+
+    const { keys, nodeMeta } = this.documentState.getProperty('entitlements')
+
+    await this._squashDocument.execute({
+      nodeMeta,
+      commitId: baseCommit.commitId,
+      keys,
+      handleVerificationObjection,
+      documentType: this.documentType,
+    })
+  }
+
+  public async squashEverythingInBaseCommit(): Promise<Result<boolean>> {
+    if (!isDocumentState(this.documentState)) {
+      throw new Error('Cannot perform squashEverythingInBaseCommit as a public user')
+    }
+
+    const baseCommit = this.documentState.getProperty('baseCommit')
+    if (!baseCommit) {
+      this.logger.info('No initial commit to squash')
+      return Result.fail('No initial commit to squash')
+    }
+
+    const { keys, nodeMeta } = this.documentState.getProperty('entitlements')
+
+    const result = await this._squashDocument.squashEverythingInBaseCommit({
+      nodeMeta,
+      commitId: baseCommit.commitId,
+      keys,
+      documentType: this.documentType,
+      handleVerificationObjection: async () => {
+        return SquashVerificationObjectionDecision.ContinueSquash
+      },
+    })
+
+    return result
+  }
+
+  public async duplicateDocument(
+    editorYjsState: Uint8Array<ArrayBuffer>,
+  ): Promise<{ nodeMeta: NodeMeta; documentType: DocumentType }> {
+    const node = this.documentState.getProperty('decryptedNode')
+    const result = await this._duplicateDocument.executePrivate(
+      this.documentState.getProperty('entitlements').nodeMeta,
+      editorYjsState,
+      this.documentState.getProperty('userRole').canEdit(),
+    )
+
+    if (result.isFailed()) {
+      const error = 'Failed to duplicate document'
+      this.logger.error(error, result.getError())
+      PostApplicationError(this.eventBus, {
+        translatedError: c('Error').t`An error occurred while attempting to duplicate the document. Please try again.`,
+      })
+      throw new Error(error, { cause: result.getError() })
+    }
+
+    const nodeMeta = result.getValue()
+    return { nodeMeta, documentType: isProtonDocsSpreadsheet(node.mimeType) ? 'sheet' : 'doc' }
+  }
+
+  public async restoreRevisionAsCopy(
+    yjsContent: YjsState,
+  ): Promise<{ nodeMeta: NodeMeta; documentType: DocumentType }> {
+    const node = this.documentState.getProperty('decryptedNode')
+    const result = await this._duplicateDocument.executePrivate(
+      this.documentState.getProperty('entitlements').nodeMeta,
+      yjsContent,
+      this.documentState.getProperty('userRole').canEdit(),
+    )
+
+    if (result.isFailed()) {
+      const error = result.getError()
+      this.logger.error('Failed to restore document as copy', result.getError())
+      PostApplicationError(this.eventBus, {
+        translatedError: c('Error').t`An error occurred while attempting to restore the document. Please try again.`,
+      })
+      throw new Error(error, { cause: result.getError() })
+    }
+
+    const nodeMeta = result.getValue()
+    return { nodeMeta, documentType: isProtonDocsSpreadsheet(node.mimeType) ? 'sheet' : 'doc' }
+  }
+
+  public async createNewDocument(documentType: DocumentType): Promise<NodeMeta> {
+    const date = getPlatformFriendlyDateForFileName()
+    const newName = getDefaultDocumentName(documentType, date)
+
+    const result = await this._createNewDocument.execute(
+      newName,
+      this.documentState.getProperty('entitlements').nodeMeta,
+      this.documentState.getProperty('decryptedNode'),
+      documentType,
+    )
+
+    if (result.isFailed()) {
+      const error = 'Failed to create new document'
+      this.logger.error(error, result.getError())
+      PostApplicationError(this.eventBus, {
+        translatedError: c('Error').t`An error occurred while creating a new document. Please try again.`,
+      })
+      throw new Error(error, { cause: result.getError() })
+    }
+
+    return result.getValue()
+  }
+
+  public async trashDocument(): Promise<void> {
+    this.documentState.setProperty('documentTrashState', 'trashing')
+
+    try {
+      const decryptedNode = this.documentState.getProperty('decryptedNode')
+
+      try {
+        await trashDocumentSDK(getDrive(), generateNodeUid(decryptedNode.volumeId, decryptedNode.nodeId))
+      } catch (error) {
+        reportTrashError(error)
+        throw error
+      }
+
+      await this.refreshNodeAndDocMeta({ imposeTrashState: 'trashed' })
+
+      this.didTrashDocInCurrentSession = true
+    } catch (error) {
+      this.logger.error(getErrorString(error) ?? 'Failed to trash document')
+
+      PostApplicationError(this.eventBus, {
+        translatedError: c('Error').t`An error occurred while attempting to trash the document. Please try again.`,
+      })
+      this.documentState.setProperty('documentTrashState', 'not_trashed')
+    }
+  }
+
+  public async restoreDocument(): Promise<void> {
+    this.documentState.setProperty('documentTrashState', 'restoring')
+
+    try {
+      const decryptedNode = this.documentState.getProperty('decryptedNode')
+
+      await restoreDocumentSDK(getDrive(), generateNodeUid(decryptedNode.volumeId, decryptedNode.nodeId))
+
+      await this.refreshNodeAndDocMeta({ imposeTrashState: 'not_trashed' })
+    } catch (error: any) {
+      if (error.message.includes('Insufficient permissions')) {
+        PostApplicationError(this.eventBus, {
+          translatedError: c('Error')
+            .t`Because this document was in a shared folder, only the folder owner can restore it`,
+        })
+        this.documentState.setProperty('documentTrashState', 'trashed')
+        return
+      }
+      reportTrashError(error)
+
+      this.logger.error(getErrorString(error) ?? 'Failed to restore document')
+
+      PostApplicationError(this.eventBus, {
+        translatedError: c('Error').t`An error occurred while attempting to restore the document. Please try again.`,
+      })
+      this.documentState.setProperty('documentTrashState', 'trashed')
+    }
+  }
+
+  public async getUpdatesInformationAsJsonFile(ydoc?: unknown) {
+    const baseCommit = this.documentState.getProperty('baseCommit')
+    return getUpdateTimeline([...(baseCommit?.messages ?? []), ...this.receivedOrSentDUs], ydoc)
+  }
+
+  public async downloadUpdatesInformation(ydoc?: unknown) {
+    const baseCommit = this.documentState.getProperty('baseCommit')
+    await downloadUpdateTimeline([...(baseCommit?.messages ?? []), ...this.receivedOrSentDUs], ydoc)
+  }
+
+  public async downloadObfuscatedUpdates() {
+    const JSZip = (await import('jszip')).default
+    const zip = new JSZip()
+
+    const baseCommit = this.documentState.getProperty('baseCommit')
+    if (baseCommit) {
+      for (const message of baseCommit.messages) {
+        let content = message.content
+        if (isCompressedDocumentUpdate(content)) {
+          content = decompressDocumentUpdate(content)
+        }
+        const hashBeforeObfuscating = await getBufferHash(content)
+        const obfuscated = obfuscateUpdate(content)
+        zip.file(`${message.timestamp}-${hashBeforeObfuscating}.bin`, obfuscated)
+      }
+    }
+
+    for (const update of this.receivedOrSentDUs) {
+      const hashBeforeObfuscating = await getBufferHash(update.content)
+      const obfuscated = obfuscateUpdate(update.content)
+      zip.file(`${update.timestamp}-${hashBeforeObfuscating}.bin`, obfuscated)
+    }
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' })
+    const zipUrl = URL.createObjectURL(zipBlob)
+    const zipLink = document.createElement('a')
+    zipLink.href = zipUrl
+    zipLink.download = 'all-updates-obfuscated.zip'
+    document.body.appendChild(zipLink)
+    zipLink.click()
+    document.body.removeChild(zipLink)
+    URL.revokeObjectURL(zipUrl)
+  }
+
+  deinit() {}
+}

@@ -1,0 +1,337 @@
+import { Router } from 'react-router-dom';
+
+import { render, screen, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import userEvent from '@testing-library/user-event';
+import { createBrowserHistory } from 'history';
+import type { Mock } from 'vitest';
+
+import { calendarUrlQueryParams } from '@proton/calendar/constants';
+import NotificationsProvider from '@proton/components/containers/notifications/Provider';
+import { useCreateMeeting } from '@proton/meet/hooks/useCreateMeeting';
+import { useGetMeetingByLinkName } from '@proton/meet/hooks/useGetMeetingByLinkName';
+import type { Address } from '@proton/shared/lib/interfaces/Address';
+import { VIDEO_CONFERENCE_PROVIDER } from '@proton/shared/lib/interfaces/calendar/Api';
+import type { EventModel } from '@proton/shared/lib/interfaces/calendar/Event';
+
+import {
+    VideoConferenceProtonMeetIntegration,
+    useVideoConfTelemetry,
+} from '../videoConferencing/useVideoConfTelemetry';
+import { ProtonMeetRow } from './ProtonMeetRow';
+import { useProtonMeetIntegration } from './useProtonMeetIntegration';
+
+vi.mock('@proton/components/hooks/drawer/useDrawer', () => ({
+    default: vi.fn().mockReturnValue({
+        isDrawerApp: false,
+    }),
+}));
+
+vi.mock('../videoConferencing/useVideoConfTelemetry', async () => {
+    const original = await vi.importActual<Record<string, unknown>>('../videoConferencing/useVideoConfTelemetry');
+
+    return {
+        ...original,
+        useVideoConfTelemetry: vi.fn().mockReturnValue({
+            sentEventProtonMeet: vi.fn(),
+        }),
+    };
+});
+
+vi.mock('@proton/account/user/hooks', () => ({
+    useUser: vi.fn().mockReturnValue([
+        {
+            Email: 'test@proton.me',
+        },
+    ]),
+}));
+
+vi.mock('@proton/account/addresses/hooks', () => ({
+    useAddresses: vi.fn().mockReturnValue([[{ ID: 'address-id', Email: 'test@proton.me' }], false]),
+}));
+
+vi.mock('@proton/unleash/useFlag', () => ({
+    useFlag: vi.fn().mockReturnValue(true),
+}));
+
+vi.mock('@proton/meet/hooks/useGetMeetingDependencies', () => ({
+    useGetMeetingDependencies: vi.fn().mockReturnValue(
+        vi.fn().mockResolvedValue({
+            dependencies: [],
+        })
+    ),
+}));
+
+vi.mock('@proton/meet/hooks/useCreateMeeting', () => ({
+    useCreateMeeting: vi.fn().mockReturnValue({ createMeeting: vi.fn() }),
+}));
+
+vi.mock('@proton/meet/hooks/useMeetingUpdates', () => ({
+    useMeetingUpdates: vi.fn().mockReturnValue({
+        saveMeetingName: vi.fn(),
+        saveMeetingSchedule: vi.fn(),
+    }),
+}));
+
+vi.mock('@proton/meet/hooks/useGetMeetingByLinkName', () => ({
+    useGetMeetingByLinkName: vi.fn().mockReturnValue({
+        getMeetingByLinkName: vi.fn(),
+    }),
+}));
+
+vi.mock('@proton/meet/utils/cryptoUtils', () => ({
+    decryptSessionKey: vi.fn().mockResolvedValue('session-key'),
+    encryptMeetingName: vi.fn().mockResolvedValue('encrypted-title'),
+}));
+
+vi.mock('./useAutoAddMeetLinkNotification', () => ({
+    useAutoAddMeetLinkNotification: vi.fn().mockReturnValue({
+        showAutoAddNotification: vi.fn(),
+        handleDisableAutoAddMeetLink: vi.fn(),
+        isDisabling: false,
+        canAutoAddMeeting: true,
+    }),
+}));
+
+vi.mock('./useMeetFunnelTelemetry', () => ({
+    useMeetFunnelTelemetry: vi.fn().mockReturnValue({
+        sendSpotlightDisplayed: vi.fn(),
+        sendExploreMeetClicked: vi.fn(),
+        sendMeetingCreated: vi.fn(),
+    }),
+}));
+
+const mockModel = {
+    title: 'Test Meeting',
+    attendees: [],
+    member: {
+        addressID: 'address-id',
+        memberID: 'member-id',
+    },
+};
+
+const password = 'testpassword';
+
+const meetingLink = `/join/id-abcdefghij#pwd-${password}`;
+
+const modelWithMeeting = {
+    ...mockModel,
+    conferenceUrl: `https://meet.proton.me${meetingLink}`,
+    conferenceId: 'abcdefghij',
+    conferenceHost: 'test@proton.me',
+    selfAddress: {
+        Email: 'test@proton.me',
+    } as Address,
+};
+
+const mockMeeting = {
+    ID: 'encrypted-id',
+    Name: mockModel.title,
+    Password: password,
+};
+
+describe('ProtonMeetRow', () => {
+    afterEach(() => {
+        vi.clearAllMocks();
+    });
+
+    const WrappedProtonMeetRow = ({
+        model,
+        isActive,
+        setModel = vi.fn(),
+    }: {
+        model: EventModel;
+        setModel: (model: EventModel) => void;
+        isActive: boolean;
+    }) => {
+        const protonMeetIntegration = useProtonMeetIntegration({
+            model,
+            setModel,
+            isActive,
+            setActiveProvider: vi.fn(),
+            setIsVideoConferenceLoading: vi.fn(),
+        });
+
+        return <ProtonMeetRow model={model} {...protonMeetIntegration} />;
+    };
+
+    const renderProtonMeetRow = (params?: {
+        model?: Partial<EventModel>;
+        setModel?: (model: EventModel) => void;
+        location?: Partial<Location>;
+        isActive?: boolean;
+    }) => {
+        const { location = {} } = params ?? {};
+
+        const history = createBrowserHistory();
+
+        if (location) {
+            history.push(location);
+        }
+
+        const renderComponent = (renderComponentParams?: typeof params) => {
+            const props = {
+                model: mockModel,
+                setModel: vi.fn(),
+                location: {},
+                isActive: false,
+                ...params,
+                ...renderComponentParams,
+            };
+
+            if (props.location) {
+                history.push(props.location);
+            }
+
+            return (
+                <NotificationsProvider>
+                    <Router history={history}>
+                        {/* @ts-expect-error - partial mock */}
+                        <WrappedProtonMeetRow {...props} />
+                    </Router>
+                </NotificationsProvider>
+            );
+        };
+
+        const { rerender: originalRerender, ...rest } = render(renderComponent());
+
+        const rerender = (newParams?: typeof params) => {
+            return originalRerender(renderComponent(newParams));
+        };
+
+        return { rerender, ...rest };
+    };
+
+    it('should render a button to add a meeting', () => {
+        renderProtonMeetRow({ isActive: false });
+
+        expect(screen.getByText('Join with Proton Meet')).toBeInTheDocument();
+    });
+
+    it('should allow for rendering the meeting details if it already exists', async () => {
+        (useGetMeetingByLinkName as Mock).mockReturnValue({
+            getMeetingByLinkName: vi.fn().mockResolvedValue(mockMeeting),
+        });
+
+        renderProtonMeetRow({ model: modelWithMeeting, isActive: true });
+
+        const user = userEvent.setup();
+
+        expect(screen.getByText('Join with Proton Meet')).toBeInTheDocument();
+
+        await user.click(screen.getByText('More details'));
+
+        expect(screen.getByText(modelWithMeeting.conferenceHost)).toBeInTheDocument();
+        expect(screen.getByText(modelWithMeeting.conferenceUrl)).toBeInTheDocument();
+    });
+
+    it('should automatically create a meeting when having the Proton Meet video conference provider in the url', async () => {
+        const createMeeting = vi.fn().mockResolvedValue({
+            meetingLink: `https://meet.proton.me${meetingLink}`,
+            id: 'abcdefghij',
+            meeting: mockMeeting,
+        });
+
+        (useCreateMeeting as Mock).mockReturnValue({
+            createMeeting,
+        });
+
+        const sentEventProtonMeet = vi.fn();
+
+        (useVideoConfTelemetry as Mock).mockReturnValue({
+            sentEventProtonMeet,
+        });
+
+        renderProtonMeetRow({
+            model: mockModel,
+            location: {
+                search: `?${calendarUrlQueryParams.videoConferenceProvider}=${VIDEO_CONFERENCE_PROVIDER.PROTON_MEET}`,
+            },
+            isActive: false,
+        });
+
+        expect(createMeeting).toHaveBeenCalled();
+
+        await waitFor(() => {
+            expect(sentEventProtonMeet).toHaveBeenCalledWith(VideoConferenceProtonMeetIntegration.create_proton_meet);
+        });
+    });
+
+    it('should not automatically create a meeting when not having the Proton Meet video conference provider in the url', () => {
+        const createMeeting = vi.fn().mockResolvedValue(mockMeeting);
+
+        (useCreateMeeting as Mock).mockReturnValue({
+            createMeeting,
+        });
+
+        renderProtonMeetRow({ model: mockModel });
+
+        expect(createMeeting).not.toHaveBeenCalled();
+    });
+
+    it('should automatically create a meeting when having a newly added attendee', async () => {
+        const createMeeting = vi.fn().mockResolvedValue(mockMeeting);
+
+        (useCreateMeeting as Mock).mockReturnValue({
+            createMeeting,
+        });
+
+        const { rerender } = renderProtonMeetRow({ model: mockModel });
+
+        const modelWithAttendee = {
+            ...mockModel,
+            attendees: [{ email: 'attendee@proton.me' }],
+        };
+
+        // @ts-expect-error - partial mock
+        rerender({ model: modelWithAttendee });
+
+        expect(createMeeting).toHaveBeenCalled();
+
+        await waitFor(() => {
+            expect(screen.getByText('Join with Proton Meet')).toBeInTheDocument();
+        });
+    });
+
+    it('should not automatically create a meeting when having a newly added attendee and having a valid video conference in the description', async () => {
+        const createMeeting = vi.fn().mockResolvedValue(mockMeeting);
+
+        (useCreateMeeting as Mock).mockReturnValue({
+            createMeeting,
+        });
+
+        const { rerender } = renderProtonMeetRow({ model: mockModel });
+
+        const modelWithAttendee = {
+            ...mockModel,
+            attendees: [{ email: 'attendee@proton.me' }],
+            description: 'https://meet.proton.me/join/id-abcdefghij#pwd-1234567890',
+        };
+
+        // @ts-expect-error - partial mock
+        rerender({ model: modelWithAttendee });
+
+        expect(createMeeting).not.toHaveBeenCalled();
+    });
+
+    it('should not automatically create a meeting when having a newly added attendee and having a valid video conference in the location', async () => {
+        const createMeeting = vi.fn().mockResolvedValue(mockMeeting);
+
+        (useCreateMeeting as Mock).mockReturnValue({
+            createMeeting,
+        });
+
+        const { rerender } = renderProtonMeetRow({ model: mockModel });
+
+        const modelWithAttendee = {
+            ...mockModel,
+            attendees: [{ email: 'attendee@proton.me' }],
+            location: 'https://meet.proton.me/join/id-abcdefghij#pwd-1234567890',
+        };
+
+        // @ts-expect-error - partial mock
+        rerender({ model: modelWithAttendee });
+
+        expect(createMeeting).not.toHaveBeenCalled();
+    });
+});

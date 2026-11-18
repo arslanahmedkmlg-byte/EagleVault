@@ -1,0 +1,35 @@
+{
+    "name": "@proton/recovery-kit",
+    "description": "Recovery kit pdf generation",
+    "exports": {
+        "./filledTemplate": "./filledTemplate.ts",
+        "./generatePDFKit": "./generatePDFKit.ts"
+    },
+    "scripts": {
+        "check:types": "tsc --checkers 1",
+        "lint": "oxlint --quiet",
+        "test": "vitest",
+        "test:ci": "pnpm run test --run",
+        "test:watch": "pnpm run test --watch"
+    },
+    "dependencies": {
+        "@formatjs/intl-segmenter": "^12.3.2",
+        "@pdfme/common": "^6.1.13",
+        "@pdfme/generator": "^6.1.13",
+        "@pdfme/schemas": "^6.1.13",
+        "@proton/shared": "workspace:^",
+        "@proton/utils": "workspace:^"
+    },
+    "devDependencies": {
+        "@pdf-lib/standard-fonts": "^1.0.0",
+        "@proton/oxlint-config": "workspace:^",
+        "@proton/vitest-config": "workspace:^",
+        "@types/node": "catalog:",
+        "@types/webpack-env": "catalog:",
+        "@typescript/native": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    }
+}

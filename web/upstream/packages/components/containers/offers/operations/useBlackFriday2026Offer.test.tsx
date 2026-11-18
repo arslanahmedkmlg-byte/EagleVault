@@ -1,0 +1,256 @@
+import { Route, Router } from 'react-router';
+
+import { renderHook } from '@testing-library/react';
+import { getUnixTime } from 'date-fns';
+import { createMemoryHistory } from 'history';
+import type { Mock } from 'vitest';
+
+import { useSubscription } from '@proton/account/subscription/hooks';
+import { useUser } from '@proton/account/user/hooks';
+import { useAutomaticCurrency } from '@proton/payments-hooks/client-extensions/useAutomaticCurrency';
+import { CYCLE, PLANS, PLAN_TYPES } from '@proton/payments/core/constants';
+import type { Subscription } from '@proton/payments/core/subscription/interface';
+import { APPS } from '@proton/shared/lib/constants';
+import type { UserModel } from '@proton/shared/lib/interfaces/User';
+import type { ProtonConfig } from '@proton/shared/lib/interfaces/config';
+import { CommonFeatureFlag } from '@proton/unleash/Flags';
+import { useFlag } from '@proton/unleash/useFlag';
+
+import ConfigProvider from '../../config/Provider';
+import useOfferFlags from '../hooks/useOfferFlags';
+import { configuration as duoToFamilyConfig } from './blackFriday2026DuoToFamily/configuration';
+import { useOffer as useDuoToFamily } from './blackFriday2026DuoToFamily/useOffer';
+import { useOffer as useFreeToDrivePlus } from './blackFriday2026FreeToDrivePlus/useOffer';
+import { useOffer as useFreeToMailPlus } from './blackFriday2026FreeToMailPlus/useOffer';
+import { useOffer as useFreeToPassPlus } from './blackFriday2026FreeToPassPlus/useOffer';
+import { configuration as freeToUnlimitedConfig } from './blackFriday2026FreeToUnlimited/configuration';
+import { useOffer as useFreeToUnlimited } from './blackFriday2026FreeToUnlimited/useOffer';
+import { configuration as plusToUnlimitedConfig } from './blackFriday2026PlusToUnlimited/configuration';
+import { useOffer as usePlusToUnlimited } from './blackFriday2026PlusToUnlimited/useOffer';
+import { configuration as unlimitedToDuoConfig } from './blackFriday2026UnlimitedToDuo/configuration';
+import { useOffer as useUnlimitedToDuo } from './blackFriday2026UnlimitedToDuo/useOffer';
+
+vi.mock('@proton/account/user/hooks');
+const mockUseUser = useUser as Mock;
+
+vi.mock('@proton/account/subscription/hooks');
+vi.mock('@proton/account/entitlementCatalog/hooks', () => ({ useEntitlementCatalog: () => [undefined] }));
+const mockUseSubscription = useSubscription as Mock;
+
+vi.mock('@proton/payments-hooks/client-extensions/useAutomaticCurrency', () => ({
+    __esModule: true,
+    useAutomaticCurrency: vi.fn(),
+}));
+const mockUseAutomaticCurrency = useAutomaticCurrency as Mock;
+
+vi.mock('../hooks/useOfferFlags', () => ({
+    __esModule: true,
+    default: vi.fn(),
+}));
+const mockUseOfferFlags = useOfferFlags as Mock;
+
+vi.mock('@proton/unleash/useFlag', () => ({
+    __esModule: true,
+    useFlag: vi.fn(),
+}));
+const mockUseFlag = useFlag as Mock;
+
+const DRIVE_CONFIG = {
+    APP_NAME: APPS.PROTONDRIVE,
+    APP_VERSION: 'test-version',
+    DATE_VERSION: 'test-date-version',
+} as ProtonConfig;
+
+const history = createMemoryHistory({ initialEntries: ['/'] });
+
+const wrapper = ({ children }: { children: React.ReactNode }) => {
+    return (
+        <ConfigProvider config={DRIVE_CONFIG}>
+            <Router history={history}>
+                <Route path="/">{children}</Route>
+            </Router>
+        </ConfigProvider>
+    );
+};
+
+const buildSubscription = (plan: PLANS, cycle: CYCLE = CYCLE.YEARLY) => {
+    return {
+        Cycle: cycle,
+        Plans: [{ Type: PLAN_TYPES.PLAN, Name: plan }],
+        CreateTime: getUnixTime(new Date(2024, 0, 1)),
+    } as unknown as Subscription;
+};
+
+/**
+ * Each entry pairs an operation's hook with a subscription that makes it eligible, so `isEligible` is
+ * asserted as a real signal rather than trivially false for every offer.
+ */
+const offerHooks = [
+    {
+        name: 'free-to-unlimited',
+        unleashFlag: CommonFeatureFlag.BlackFriday2026FreeToUnlimitedOffer,
+        useOffer: useFreeToUnlimited,
+        plan: undefined,
+        cycle: undefined,
+        isPaid: false,
+        ref: 'offer_bf_26_drive_free_unlimited_web',
+        configuration: freeToUnlimitedConfig,
+    },
+    {
+        name: 'plus-to-unlimited',
+        unleashFlag: CommonFeatureFlag.BlackFriday2026PlusToUnlimitedOffer,
+        useOffer: usePlusToUnlimited,
+        plan: PLANS.MAIL,
+        cycle: undefined,
+        isPaid: true,
+        ref: 'offer_bf_26_drive_plus_unlimited_web',
+        configuration: plusToUnlimitedConfig,
+    },
+    {
+        name: 'unlimited-to-duo',
+        unleashFlag: CommonFeatureFlag.BlackFriday2026UnlimitedToDuoOffer,
+        useOffer: useUnlimitedToDuo,
+        plan: PLANS.BUNDLE,
+        cycle: undefined,
+        isPaid: true,
+        ref: 'offer_bf_26_drive_unlimited_duo_web',
+        configuration: unlimitedToDuoConfig,
+    },
+    {
+        name: 'duo-to-family',
+        unleashFlag: CommonFeatureFlag.BlackFriday2026DuoToFamilyOffer,
+        useOffer: useDuoToFamily,
+        plan: PLANS.DUO,
+        cycle: undefined,
+        isPaid: true,
+        ref: 'offer_bf_26_drive_duo_family_web',
+        configuration: duoToFamilyConfig,
+    },
+];
+
+type LoadingSource = 'user' | 'subscription' | 'currency' | 'offerFlags';
+
+const setupMocks = ({
+    plan,
+    cycle = CYCLE.YEARLY,
+    isPaid = true,
+    loadingSource,
+}: {
+    plan?: PLANS;
+    cycle?: CYCLE;
+    isPaid?: boolean;
+    /** Marks exactly one dependency as loading, so each one is proven to reach `isLoading` on its own. */
+    loadingSource?: LoadingSource;
+} = {}) => {
+    mockUseUser.mockReturnValue([
+        {
+            isDelinquent: false,
+            canPay: true,
+            isPaid,
+            isFree: !isPaid,
+            CreateTime: getUnixTime(new Date(2024, 0, 1)),
+        } as UserModel,
+        loadingSource === 'user',
+    ]);
+    mockUseSubscription.mockReturnValue([
+        plan ? buildSubscription(plan, cycle) : undefined,
+        loadingSource === 'subscription',
+    ]);
+    mockUseAutomaticCurrency.mockReturnValue(['EUR', loadingSource === 'currency']);
+    mockUseOfferFlags.mockReturnValue({ isActive: true, loading: loadingSource === 'offerFlags' });
+    mockUseFlag.mockReturnValue(true);
+};
+
+describe('useBlackFriday2026Offer', () => {
+    afterEach(() => {
+        vi.resetAllMocks();
+    });
+
+    it.each(offerHooks)('$name resolves its tracking ref in full', ({ useOffer, plan, cycle, isPaid, ref }) => {
+        setupMocks({ plan, cycle, isPaid });
+
+        const { result } = renderHook(() => useOffer(), { wrapper });
+
+        expect(result.current.config.deals[0].ref).toBe(ref);
+    });
+
+    it.each(offerHooks)(
+        '$name does not fall back to its static ref',
+        ({ useOffer, plan, cycle, isPaid, configuration }) => {
+            setupMocks({ plan, cycle, isPaid });
+
+            const { result } = renderHook(() => useOffer(), { wrapper });
+
+            // Every static fallback is the mail variant, so resolution running is what makes these differ.
+            expect(result.current.config.deals[0].ref).not.toBe(configuration.deals[0].ref);
+        }
+    );
+
+    it.each(offerHooks)(
+        '$name reports eligible and valid for its target audience',
+        ({ useOffer, plan, cycle, isPaid }) => {
+            setupMocks({ plan, cycle, isPaid });
+
+            const { result } = renderHook(() => useOffer(), { wrapper });
+
+            expect(result.current.isEligible).toBe(true);
+            expect(result.current.isValid).toBe(true);
+            expect(result.current.isLoading).toBe(false);
+        }
+    );
+
+    it.each(offerHooks)(
+        '$name is not valid while its Unleash flag is off, even though the user is eligible',
+        ({ useOffer, plan, cycle, isPaid, unleashFlag }) => {
+            setupMocks({ plan, cycle, isPaid });
+            // Only this offer's flag is off, so reading another offer's flag would leave it valid.
+            mockUseFlag.mockImplementation((name) => {
+                return name !== unleashFlag;
+            });
+
+            const { result } = renderHook(() => useOffer(), { wrapper });
+
+            expect(result.current.isEligible).toBe(true);
+            expect(result.current.isValid).toBe(false);
+        }
+    );
+
+    it.each([
+        { name: 'free-to-unlimited', useOffer: useFreeToUnlimited, unleashFlag: 'BlackFriday2026FreeToUnlimitedOffer' },
+        { name: 'free-to-mail-plus', useOffer: useFreeToMailPlus, unleashFlag: 'BlackFriday2026FreeToMailPlusOffer' },
+        {
+            name: 'free-to-drive-plus',
+            useOffer: useFreeToDrivePlus,
+            unleashFlag: 'BlackFriday2026FreeToDrivePlusOffer',
+        },
+        { name: 'free-to-pass-plus', useOffer: useFreeToPassPlus, unleashFlag: 'BlackFriday2026FreeToPassPlusOffer' },
+        { name: 'plus-to-unlimited', useOffer: usePlusToUnlimited, unleashFlag: 'BlackFriday2026PlusToUnlimitedOffer' },
+        { name: 'unlimited-to-duo', useOffer: useUnlimitedToDuo, unleashFlag: 'BlackFriday2026UnlimitedToDuoOffer' },
+        { name: 'duo-to-family', useOffer: useDuoToFamily, unleashFlag: 'BlackFriday2026DuoToFamilyOffer' },
+    ])('$name reads the $unleashFlag Unleash flag', ({ useOffer, unleashFlag }) => {
+        setupMocks();
+
+        renderHook(() => useOffer(), { wrapper });
+
+        expect(mockUseFlag).toHaveBeenCalledWith(unleashFlag);
+    });
+
+    // One case per dependency: asserting them together would still pass if `isLoading` dropped one.
+    const loadingSources: LoadingSource[] = ['user', 'subscription', 'currency', 'offerFlags'];
+    const loadingCases = offerHooks.flatMap((offer) => {
+        return loadingSources.map((loadingSource) => {
+            return { ...offer, loadingSource };
+        });
+    });
+
+    it.each(loadingCases)(
+        '$name reports loading while $loadingSource loads',
+        ({ useOffer, plan, cycle, isPaid, loadingSource }) => {
+            setupMocks({ plan, cycle, isPaid, loadingSource });
+
+            const { result } = renderHook(() => useOffer(), { wrapper });
+
+            expect(result.current.isLoading).toBe(true);
+        }
+    );
+});

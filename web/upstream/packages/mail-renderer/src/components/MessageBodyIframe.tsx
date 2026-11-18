@@ -1,0 +1,154 @@
+import type { RefObject } from 'react';
+import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
+
+import { c } from 'ttag';
+
+import { Tooltip } from '@proton/atoms/Tooltip/Tooltip';
+import type { RefObjectReact18Compat } from '@proton/atoms/helpers/RefObjectReact18Compat';
+import type { ThemeContextInterface } from '@proton/components/containers/themes/ThemeProvider';
+import useSyncIframeStyles from '@proton/components/containers/themes/useSyncIframeStyles';
+import { IcThreeDotsHorizontal } from '@proton/icons/icons/IcThreeDotsHorizontal';
+import { getIframeSandboxAttributes } from '@proton/mail-message/helpers/composer';
+import type { MessageState, OnMessageImageLoadError } from '@proton/mail-message/store/messages/messagesTypes';
+import clsx from '@proton/utils/clsx';
+
+import { getIframeDocument } from '../helpers/getIframeDocument';
+import useIframeAfterBlockquote from '../hooks/useIframeAfterBlockquote';
+import useIframeDispatchEvents from '../hooks/useIframeDispatchEvents';
+import useIframeShowBlockquote from '../hooks/useIframeShowBlockquote';
+import useInitIframeContent from '../hooks/useInitIframeContent';
+import useObserveIframeHeight from '../hooks/useObserveIframeHeight';
+import MessageBodyImages from './MessageBodyImages';
+
+interface Props {
+    iframeRef: RefObjectReact18Compat<HTMLIFrameElement>;
+    content: string;
+    className?: string;
+    showBlockquote: boolean;
+    showBlockquoteToggle: boolean;
+    blockquoteContent: string;
+    afterBlockquoteContent?: string;
+    isPlainText: boolean;
+    onBlockquoteToggle?: () => void;
+    onContentLoaded: (iframeRootDivRef: HTMLDivElement) => void;
+    isPrint?: boolean;
+    message: MessageState;
+    onReady?: (iframeRef: RefObject<HTMLIFrameElement | null>) => void;
+    onFocus?: () => void;
+    onMessageImageLoadError: OnMessageImageLoadError;
+    theme: ThemeContextInterface;
+    iframeCSSStyles: string;
+}
+
+const MessageBodyIframe = ({
+    iframeRef,
+    content,
+    className,
+    blockquoteContent,
+    afterBlockquoteContent = '',
+    showBlockquote: showBlockquoteProp,
+    showBlockquoteToggle,
+    onBlockquoteToggle,
+    onContentLoaded,
+    isPlainText,
+    isPrint = false,
+    message,
+    onReady,
+    onMessageImageLoadError,
+    onFocus,
+    theme,
+    iframeCSSStyles,
+}: Props) => {
+    useSyncIframeStyles(getIframeDocument(iframeRef.current)?.documentElement, document.documentElement);
+
+    const { initStatus, iframeRootDivRef } = useInitIframeContent({
+        messageID: message.data?.ID,
+        content,
+        message,
+        iframeRef,
+        onContentLoaded,
+        isPlainText,
+        onReady,
+        isPrint,
+        theme,
+        iframeCSSStyles,
+    });
+
+    const { showToggle, iframeToggleDiv, showBlockquote, setShowBlockquote } = useIframeShowBlockquote({
+        blockquoteContent,
+        iframeRef,
+        initStatus,
+        showBlockquoteProp,
+        showBlockquoteToggle,
+        onBlockquoteToggle,
+    });
+
+    useIframeAfterBlockquote({
+        iframeRef,
+        initStatus,
+        afterBlockquoteContent,
+    });
+
+    useIframeDispatchEvents(initStatus === 'done', iframeRef, onFocus, isPlainText);
+
+    useObserveIframeHeight(initStatus === 'done', iframeRef);
+
+    useEffect(() => {
+        /** Add class in case the user theme is dark. Helps fixing issues with dark themes */
+        iframeRootDivRef.current?.classList[theme.information.dark ? 'add' : 'remove']('proton-dark-theme');
+    }, [theme.information.dark]);
+
+    return (
+        <>
+            <iframe
+                title={c('Title').t`Email content`}
+                src="about:blank"
+                scrolling="yes"
+                frameBorder="0"
+                ref={iframeRef}
+                className={clsx([initStatus !== 'start' ? 'w-full' : 'w-0 h-0', className])}
+                data-testid="content-iframe"
+                data-subject={message.data?.Subject}
+                sandbox={getIframeSandboxAttributes(isPrint)}
+                allowFullScreen={false}
+                translate="yes"
+            />
+            {initStatus !== 'start' && (
+                <MessageBodyImages
+                    iframeRef={iframeRef}
+                    isPrint={isPrint}
+                    messageImages={message.messageImages}
+                    onMessageImageLoadError={onMessageImageLoadError}
+                />
+            )}
+            {showToggle &&
+                iframeToggleDiv &&
+                createPortal(
+                    <Tooltip
+                        title={showBlockquote ? c('Info').t`Hide original message` : c('Info').t`Show original message`}
+                        relativeReference={iframeRef}
+                    >
+                        <button
+                            type="button"
+                            className="proton-toggle-button"
+                            onClick={() => {
+                                setShowBlockquote(!showBlockquote);
+                            }}
+                            data-testid="message-view:expand-codeblock"
+                        >
+                            <IcThreeDotsHorizontal size={3.5} className="m-auto" />
+                            <span className="proton-sr-only">
+                                {showBlockquote
+                                    ? c('Info').t`Hide original message`
+                                    : c('Info').t`Show original message`}
+                            </span>
+                        </button>
+                    </Tooltip>,
+                    iframeToggleDiv
+                )}
+        </>
+    );
+};
+
+export default MessageBodyIframe;

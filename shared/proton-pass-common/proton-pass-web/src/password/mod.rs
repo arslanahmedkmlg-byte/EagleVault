@@ -1,0 +1,67 @@
+use password_types::{
+    WasmPassphraseConfig, WasmPasswordScore, WasmPasswordScoreList, WasmPasswordScoreResult, WasmRandomPasswordConfig,
+};
+use proton_pass_common::password::{PassphraseConfig, RandomPasswordConfig, get_generator};
+use tsify::{Ts, Tsify};
+use wasm_bindgen::prelude::*;
+
+mod password_types;
+
+#[wasm_bindgen]
+pub fn generate_password(config: Ts<WasmRandomPasswordConfig>) -> Result<String, JsError> {
+    let mut generator = get_generator();
+    let cfg: RandomPasswordConfig = config.to_rust()?;
+    generator.generate_random(&cfg).map_err(|e| e.into())
+}
+
+#[wasm_bindgen]
+pub fn random_words(word_count: u32) -> Result<Vec<String>, JsError> {
+    let mut generator = get_generator();
+    generator.random_words(word_count as usize).map_err(|e| e.into())
+}
+
+#[wasm_bindgen]
+pub fn generate_passphrase(words: Vec<String>, config: Ts<WasmPassphraseConfig>) -> Result<String, JsError> {
+    let mut generator = get_generator();
+    let cfg: PassphraseConfig = config.to_rust()?;
+
+    generator
+        .generate_passphrase_from_words(words, &cfg)
+        .map_err(|e| e.into())
+}
+
+#[wasm_bindgen]
+pub fn generate_random_passphrase(config: Ts<WasmPassphraseConfig>) -> Result<String, JsError> {
+    let mut generator = get_generator();
+    let cfg: PassphraseConfig = config.to_rust()?;
+
+    generator.generate_passphrase(&cfg).map_err(|e| e.into())
+}
+
+#[wasm_bindgen]
+pub fn analyze_password(password: String) -> Result<Ts<WasmPasswordScoreResult>, JsError> {
+    Ok(proton_pass_common::password::check_score(&password).into_ts()?)
+}
+
+#[wasm_bindgen]
+pub fn check_password_score(password: String) -> Result<Ts<WasmPasswordScore>, JsError> {
+    Ok(proton_pass_common::password::check_score(&password)
+        .password_score
+        .into_ts()?)
+}
+
+#[wasm_bindgen]
+pub fn check_password_scores(passwords: Vec<String>) -> Result<Ts<WasmPasswordScoreList>, JsError> {
+    let scores = WasmPasswordScoreList(
+        passwords
+            .iter()
+            .map(|password| proton_pass_common::password::check_score(password).password_score)
+            .collect(),
+    );
+    Ok(scores.into_ts()?)
+}
+
+#[wasm_bindgen]
+pub fn calculate_password_score(password: String) -> f64 {
+    proton_pass_common::password::numeric_score(&password)
+}

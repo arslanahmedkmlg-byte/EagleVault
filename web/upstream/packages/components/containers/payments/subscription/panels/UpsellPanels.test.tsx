@@ -1,0 +1,55 @@
+import { within } from '@testing-library/react';
+
+import { PLANS } from '@proton/payments/core/constants';
+
+import { familyUpsell, subscriptionMail, unlimitedUpsell } from '../../../../testing/subscriptionData';
+import { renderWithProviders } from '../../../../testing/vitest/renderWithProviders';
+import UpsellPanels from './UpsellPanels';
+
+describe('UpsellPanel', () => {
+    it('should display panels with correct details', async () => {
+        const { container } = renderWithProviders(
+            <UpsellPanels
+                subscription={subscriptionMail}
+                upsells={[
+                    { ...unlimitedUpsell, planIDs: { [PLANS.BUNDLE]: 1 }, onUpgrade: vi.fn(), isRecommended: true },
+                    { ...familyUpsell, planIDs: { [PLANS.FAMILY]: 1 }, onUpgrade: vi.fn() },
+                ]}
+            />
+        );
+
+        expect(container.childNodes).toHaveLength(2);
+
+        const unlimitedUpsellPanel = container.childNodes[0] as HTMLElement;
+        const familyUpsellPanel = container.childNodes[1] as HTMLElement;
+
+        expect(within(unlimitedUpsellPanel).getByText('Recommended'));
+        // 1rst upsell - title
+        expect(within(unlimitedUpsellPanel).getByText('Proton Unlimited'));
+        //  description
+        expect(
+            within(unlimitedUpsellPanel).getByText(
+                'All premium features from Proton Mail, Calendar, Drive, VPN, and Pass.'
+            )
+        );
+        // features
+        within(unlimitedUpsellPanel).getByText('500 GB storage');
+        expect(within(unlimitedUpsellPanel).getByText('15 email addresses/aliases'));
+        expect(within(unlimitedUpsellPanel).getByText('3 custom email domains'));
+        expect(within(unlimitedUpsellPanel).getByText('25 calendars'));
+        expect(within(unlimitedUpsellPanel).getByText('10 high-speed VPN connections'));
+        expect(within(unlimitedUpsellPanel).getByText('Proton Pass with unlimited hide-my-email aliases'));
+
+        expect(within(familyUpsellPanel).queryByText('Recommended')).toBeNull();
+        // 2nd upsell - title
+        expect(within(familyUpsellPanel).getByText('Proton Family'));
+        //  description
+        expect(within(familyUpsellPanel).getByText('Protect your family’s privacy with all Proton services combined.'));
+        // features
+        expect(within(familyUpsellPanel).getByText('3 TB storage'));
+        expect(within(familyUpsellPanel).getByText('Up to 6 users'));
+        expect(within(familyUpsellPanel).getByText('90 email addresses/aliases'));
+        expect(within(familyUpsellPanel).getByText('10 high-speed VPN connections'));
+        expect(within(familyUpsellPanel).getByText('Proton Pass with unlimited hide-my-email aliases'));
+    });
+});

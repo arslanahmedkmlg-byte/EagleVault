@@ -1,0 +1,1038 @@
+import { v4 as uuidv4 } from 'uuid';
+
+import type { Api } from '@proton/shared/lib/interfaces/Api';
+
+import type {
+    ChatCompletionsFunctionTool,
+    ChatCompletionsTool,
+    LumoClientType,
+    LumoCompletionTarget,
+    ResponseFormat,
+    ToolName,
+} from '../types-api';
+import { when } from '../util/collections';
+import { type LumoApiModelTier, toChatCompletionsBody } from './chat-completions';
+import {
+    type ClientToolExecutor,
+    type ClientToolResult,
+    type PendingClientToolCall,
+    filterClientToolCalls,
+    mergePendingClientToolCalls,
+    resolveClientToolExecutor,
+} from './client-tools';
+import { createDesktopClientToolExecutor } from './desktop-tools';
+import { DEFAULT_LUMO_PUB_KEY, encryptTurns } from './encryption';
+import { RequestEncryptionParams } from './encryptionParams';
+import { getTerminalTypeFromApiError } from './generation-terminal';
+import { LUMO_CHAT_ENDPOINT, callChatEndpoint, resumeChatEndpoint } from './network';
+import { GenerationInterruptedError, ToolRetryConfirmationRequiredError, newRecoveryState } from './recovery';
+import type { GenerationRecoveryState } from './recovery';
+import { makeRecoverableStream } from './recovery-stream';
+import { RequestBuilder } from './request-builder';
+import { extractTitleSourceText } from './title-generation';
+import { processToolFileResult } from './tool-files';
+import { expandToolResultImages } from './tool-result-images';
+import { makeAbortTransformStream } from './transforms/abort';
+import { makeChunkParserTransformStreamWithCapture } from './transforms/chunks';
+import { makeContextUpdaterTransformStream } from './transforms/context';
+import { decryptToolCallArguments, makeDecryptionTransformStream } from './transforms/decrypt';
+import { makeFinishSink } from './transforms/finish';
+import { makeImageLoggerTransformStream } from './transforms/image-logger';
+import { makeSmoothingTransformStream } from './transforms/smoothing';
+import { makeUtf8DecodingTransformStream } from './transforms/utf8';
+import {
+    type AssistantCallOptions,
+    type AssistantCallResult,
+    type ChunkCallback,
+    type FinishCallback,
+    type GenerationResponseMessage,
+    type ImageAspectRatio,
+    type LumoApiClientConfig,
+    type LumoApiGenerationRequest,
+    type RequestContext,
+    type RequestInterceptor,
+    type ResponseContext,
+    type ResponseInterceptor,
+    Role,
+    type Status,
+    type Turn,
+} from './types';
+
+// Default configuration
+const DEFAULT_CONFIG: LumoApiClientConfig = {
+    enableU2LEncryption: true,
+    enableSmoothing: true,
+    endpoint: LUMO_CHAT_ENDPOINT,
+    lumoPubKey: DEFAULT_LUMO_PUB_KEY,
+    externalTools: ['web_search', 'weather', 'stock', 'cryptocurrency', 'web_extract', 'proton_info'],
+    imageTools: ['generate_image', 'describe_image', 'edit_image'],
+    enableDesktopTools: false,
+    interceptors: {
+        request: [],
+        response: [],
+    },
+};
+
+/**
+ * Safety net against a runaway model, not a UX budget: high enough to never trip in normal use. A chain
+ * that hits it just ends, without a closing answer.
+ */
+export const MAX_CLIENT_TOOL_ROUNDS = 100;
+
+type GenerationRequestFlags = {
+    enableExternalTools: boolean;
+    enableImageTools: boolean;
+    enableReasoning: boolean;
+    enableSuggestedQuestions: boolean;
+    clientToolExecutor?: ClientToolExecutor;
+};
+
+const missingResultFor = (call: PendingClientToolCall): ClientToolResult => ({
+    content: JSON.stringify({ error: `The ${call.name} tool returned no result. Try again.` }),
+    is_error: true,
+});
+
+/**
+ * Main LLM API Client class
+ */
+export class LumoApiClient {
+    private config: LumoApiClientConfig;
+
+    constructor(config: Partial<LumoApiClientConfig> = {}) {
+        this.config = { ...DEFAULT_CONFIG, ...config };
+    }
+
+    /******* Toplevel logic *******/
+
+    /**
+     * Call the Lumo Assistant API
+     * @param api - Proton API instance
+     * @param turns - Array of conversation turns
+     * @param options - Request options
+     * @returns Promise that resolves when the generation is complete
+     */
+    async callAssistant(api: Api, turns: Turn[], options: AssistantCallOptions = {}): Promise<AssistantCallResult> {
+        const {
+            chunkCallback,
+            finishCallback,
+            recordRequestCallback,
+            signal,
+            enableExternalTools = false,
+            enableImageTools = false,
+            enableReasoning = false,
+            enableAnswerNow = false,
+            modelTier = 'auto',
+            enableSuggestedQuestions = false,
+            enableDesktopTools = this.config.enableDesktopTools,
+            requestKey,
+            requestId,
+            generateTitle = false,
+            autoGenerateEncryption = true,
+            imageAspectRatio,
+            responseFormat,
+            clientTools,
+            serverTools,
+            clientToolExecutor,
+            featureFlags,
+            clientType,
+            recovery: requestedRecovery,
+            resume,
+        } = options;
+        const { enableU2LEncryption, endpoint } = this.config;
+
+        const resolvedClientToolExecutor = resolveClientToolExecutor({
+            clientToolExecutor,
+            createDefaultExecutor: enableDesktopTools ? createDesktopClientToolExecutor : undefined,
+        });
+
+        // Setup U2L encryption
+        const encryption = await RequestEncryptionParams.create(requestKey, requestId, {
+            enableU2LEncryption,
+            autoGenerateEncryption,
+        });
+
+        const titleSourceText = generateTitle ? extractTitleSourceText(turns) : null;
+
+        const requestContext: RequestContext = this.initializeRequestContext(endpoint, {
+            enableU2LEncryption,
+            enableExternalTools,
+        });
+
+        const parallelTasks: Promise<void>[] = [];
+
+        if (titleSourceText !== null && !resume) {
+            const titleTurns: Turn[] = [
+                { role: Role.User, content: titleSourceText },
+                { role: Role.Assistant, content: '' },
+            ];
+            parallelTasks.push(
+                this.runTargetedGeneration(
+                    api,
+                    titleTurns,
+                    'title',
+                    endpoint,
+                    signal,
+                    chunkCallback,
+                    encryption,
+                    enableU2LEncryption,
+                    modelTier === 'apertus-15' ? 'apertus-15' : 'lumo-lite',
+                    featureFlags,
+                    clientType
+                ).catch((error) => {
+                    if (error?.name === 'AbortError') {
+                        return;
+                    }
+                    console.warn('Title generation failed:', error);
+                })
+            );
+        }
+
+        if (enableSuggestedQuestions && !resume) {
+            parallelTasks.push(
+                this.runTargetedGeneration(
+                    api,
+                    turns,
+                    'suggested_questions',
+                    endpoint,
+                    signal,
+                    chunkCallback,
+                    encryption,
+                    enableU2LEncryption,
+                    modelTier === 'apertus-15' ? 'apertus-15' : 'lumo-lite',
+                    featureFlags,
+                    clientType
+                ).catch((error) => {
+                    if (error?.name === 'AbortError') {
+                        return;
+                    }
+                    console.warn('Suggested questions generation failed:', error);
+                })
+            );
+        }
+
+        // The model's prose reaches us only as chunks, but it has to go back into the chain or a
+        // resumed turn replays a history in which the assistant never spoke.
+        let roundReply = '';
+        const roundChunkCallback: ChunkCallback = async (message) => {
+            if (message.type === 'token_data' && message.target === 'message') {
+                roundReply += message.content;
+            }
+            // Suppress intermediate `done` events while client tool rounds may continue.
+            if (message.type === 'done') {
+                return;
+            }
+            return chunkCallback?.(message);
+        };
+
+        let recovery = requestedRecovery;
+        let currentTurns = resume?.turns ?? turns;
+        let recoveryState = resume;
+        const saveCheckpoint = async (allowDisable = false): Promise<void> => {
+            if (!recovery || !recoveryState) {
+                return;
+            }
+            const result = await recovery.checkpoint(recoveryState, encryption);
+            if (result === 'disabled') {
+                if (!allowDisable) {
+                    throw new GenerationInterruptedError();
+                }
+                recovery = undefined;
+                recoveryState = undefined;
+            }
+        };
+        let interrupted = false;
+        let finalStatus: Status = 'failed';
+        const firstRound = (resume?.round ?? 0) + (resume?.phase === 'ready' ? 1 : 0);
+        try {
+            for (let rounds = firstRound; rounds < MAX_CLIENT_TOOL_ROUNDS; rounds++) {
+                if (this.isGenerationStopped(signal)) {
+                    finalStatus = 'succeeded';
+                    break;
+                }
+                const target = resume?.target ?? 'message';
+                if (recovery && (!recoveryState || recoveryState.phase === 'ready')) {
+                    const allowDisable = recoveryState === undefined && resume === undefined;
+                    const previousJobs = recoveryState
+                        ? [
+                              ...(recoveryState.previousJobs ?? []),
+                              { jobId: recoveryState.jobId, token: recoveryState.token },
+                          ]
+                        : [];
+                    recoveryState = { ...newRecoveryState(currentTurns, target), previousJobs, round: rounds };
+                    await saveCheckpoint(allowDisable);
+                }
+                if (recoveryState?.phase === 'tool-running') {
+                    const retryConfirmed = await recovery?.confirmToolRetry?.();
+                    if (this.isGenerationStopped(signal)) {
+                        finalStatus = 'succeeded';
+                        break;
+                    }
+                    if (!retryConfirmed) {
+                        throw new ToolRetryConfirmationRequiredError();
+                    }
+                }
+                if (recoveryState?.phase === 'completed') {
+                    finalStatus = 'succeeded';
+                    break;
+                }
+                const plaintextRequest = await this.preparePlaintextGenerationRequest(
+                    currentTurns,
+                    {
+                        enableExternalTools,
+                        enableImageTools,
+                        enableReasoning,
+                        enableSuggestedQuestions: false,
+                        clientToolExecutor: resolvedClientToolExecutor,
+                    },
+                    { imageAspectRatio }
+                );
+
+                recordRequestCallback?.(
+                    this.prepareChatEndpointPostData(plaintextRequest, {
+                        enableReasoning,
+                        modelTier,
+                        target: 'message',
+                        enableAnswerNow,
+                        responseFormat,
+                        clientTools,
+                        serverTools,
+                        featureFlags,
+                        clientType,
+                    })
+                );
+
+                let request = await this.encryptGenerationRequest(plaintextRequest, encryption);
+                request = await this.notifyRequestInterceptors(request, requestContext);
+
+                const responseContext: ResponseContext = this.initializeResponseContext(requestContext);
+
+                const toolCheckpoint = recoveryState && ['tool-pending', 'tool-running'].includes(recoveryState.phase);
+                const { pendingClientToolCalls, status } = toolCheckpoint
+                    ? { pendingClientToolCalls: recoveryState?.pendingCalls ?? [], status: 'succeeded' as Status }
+                    : await this.runSseReceiveLoop(
+                          api,
+                          request,
+                          endpoint,
+                          signal,
+                          encryption,
+                          responseContext,
+                          roundChunkCallback,
+                          undefined,
+                          {
+                              target,
+                              modelTier,
+                              enableAnswerNow,
+                              responseFormat,
+                              clientTools,
+                              serverTools,
+                              featureFlags,
+                              clientType,
+                              recoveryState,
+                              resumeStream: Boolean(resume?.phase === 'streaming' && rounds === (resume.round ?? 0)),
+                          }
+                      );
+                finalStatus = status;
+
+                if (recoveryState && recovery && !toolCheckpoint) {
+                    currentTurns = this.withAssistantReply(currentTurns, roundReply);
+                    roundReply = '';
+                    recoveryState = {
+                        ...recoveryState,
+                        turns: currentTurns,
+                        pendingCalls: pendingClientToolCalls,
+                        phase:
+                            resolvedClientToolExecutor &&
+                            filterClientToolCalls(pendingClientToolCalls, resolvedClientToolExecutor).length > 0
+                                ? 'tool-pending'
+                                : 'completed',
+                    };
+                    await saveCheckpoint();
+                }
+
+                if (!resolvedClientToolExecutor) {
+                    break;
+                }
+
+                const executableCalls = filterClientToolCalls(pendingClientToolCalls, resolvedClientToolExecutor);
+                if (executableCalls.length === 0) {
+                    break;
+                }
+
+                if (recovery && recoveryState) {
+                    recoveryState = { ...recoveryState, phase: 'tool-running' };
+                    await saveCheckpoint();
+                }
+                if (this.isGenerationStopped(signal)) {
+                    finalStatus = 'succeeded';
+                    break;
+                }
+                const toolRound = await this.appendClientToolResults(
+                    this.withAssistantReply(currentTurns, roundReply),
+                    executableCalls,
+                    resolvedClientToolExecutor,
+                    chunkCallback
+                );
+                currentTurns = toolRound.turns;
+                roundReply = '';
+                if (recovery && recoveryState) {
+                    recoveryState = {
+                        ...recoveryState,
+                        turns: currentTurns,
+                        phase: toolRound.endTurn || this.isGenerationStopped(signal) ? 'completed' : 'ready',
+                        pendingCalls: undefined,
+                    };
+                    await saveCheckpoint();
+                }
+
+                // Stop if a tool ended the turn or the user cancelled generation.
+                if (toolRound.endTurn || this.isGenerationStopped(signal)) {
+                    break;
+                }
+            }
+
+            if (this.isGenerationStopped(signal) && recovery && recoveryState) {
+                recoveryState = { ...recoveryState, turns: currentTurns, phase: 'completed', pendingCalls: undefined };
+                await saveCheckpoint();
+            }
+
+            if (chunkCallback) {
+                await chunkCallback({ type: 'done' });
+            }
+
+            await Promise.all(parallelTasks);
+        } catch (error) {
+            interrupted =
+                error instanceof GenerationInterruptedError || error instanceof ToolRetryConfirmationRequiredError;
+            finalStatus = 'failed';
+            throw error;
+        } finally {
+            if (finishCallback && !interrupted) {
+                await finishCallback(finalStatus);
+            }
+        }
+
+        const sentCount = this.stripTrailingEmptyAssistant(turns).length;
+        const producedTurns = this.withAssistantReply(currentTurns, roundReply).slice(sentCount);
+        return { status: finalStatus, turns: currentTurns, producedTurns };
+    }
+
+    private isGenerationStopped(signal: AbortSignal | undefined): boolean {
+        if (signal?.reason instanceof GenerationInterruptedError) {
+            throw signal.reason;
+        }
+        return signal?.aborted ?? false;
+    }
+
+    private async runSseReceiveLoop(
+        api: Api,
+        request: LumoApiGenerationRequest,
+        endpoint: string,
+        signal: AbortSignal | undefined,
+        encryption: RequestEncryptionParams | null,
+        responseContext: ResponseContext,
+        chunkCallback: ChunkCallback | undefined,
+        finishCallback: FinishCallback | undefined,
+        options: {
+            enableSmoothing?: boolean;
+            target?: LumoCompletionTarget;
+            modelTier?: LumoApiModelTier;
+            enableAnswerNow?: boolean;
+            responseFormat?: ResponseFormat;
+            clientTools?: ChatCompletionsFunctionTool[];
+            serverTools?: ToolName[];
+            featureFlags?: AssistantCallOptions['featureFlags'];
+            clientType?: LumoClientType;
+            recoveryState?: GenerationRecoveryState;
+            resumeStream?: boolean;
+        } = {}
+    ): Promise<{ pendingClientToolCalls: PendingClientToolCall[]; status: Status }> {
+        const enableSmoothing = options.enableSmoothing ?? this.config.enableSmoothing;
+        const target = options.target ?? 'message';
+        const thisNotifyResponse = this.notifyResponse.bind(this);
+        const chunkCapture = makeChunkParserTransformStreamWithCapture(target, Boolean(options.recoveryState));
+
+        // Final status will be changed to succeeded on success
+        let finalStatus: Status = 'failed';
+
+        const postData = this.prepareChatEndpointPostData(request, {
+            enableReasoning: Boolean(request.options?.reasoning),
+            modelTier: options.modelTier,
+            enableAnswerNow: options.enableAnswerNow,
+            target: options.target,
+            responseFormat: options.responseFormat,
+            clientTools: options.clientTools,
+            serverTools: options.serverTools,
+            featureFlags: options.featureFlags,
+            clientType: options.clientType,
+        });
+
+        let terminalSeen = false;
+        let serverFailure = false;
+        try {
+            let responseBody: ReadableStream;
+            try {
+                responseBody =
+                    options.resumeStream && options.recoveryState
+                        ? await resumeChatEndpoint(api, options.recoveryState, signal)
+                        : await callChatEndpoint(api, postData, { endpoint, signal, recovery: options.recoveryState });
+            } catch (error) {
+                // Fetch rejects with TypeError when the connection drops before response headers.
+                // Limit this conversion to the HTTP call so callback errors still surface normally.
+                if (options.recoveryState && error instanceof TypeError) {
+                    throw new GenerationInterruptedError();
+                }
+                throw error;
+            }
+
+            // Run the processing stream: this is the core logic
+            const stream = options.recoveryState ? makeRecoverableStream(responseBody) : responseBody;
+            await stream
+                .pipeThrough(makeAbortTransformStream(signal)) // deals with AbortSignal
+                .pipeThrough(makeUtf8DecodingTransformStream()) // bytes -> utf8
+                .pipeThrough(chunkCapture.stream) // utf8 -> chunk objects
+                .pipeThrough(makeDecryptionTransformStream(encryption)) // U2L decryption
+                .pipeThrough(makeImageLoggerTransformStream()) // noop - logs image_data
+                .pipeThrough(makeContextUpdaterTransformStream(responseContext)) // bookkeeping (read-only)
+                .pipeThrough(makeSmoothingTransformStream(enableSmoothing, signal))
+                // The signal must reach the sink too: once the body has closed, the smoothing buffer drains with
+                // no further bytes for the abort transform to catch.
+                .pipeTo(
+                    makeFinishSink(
+                        thisNotifyResponse,
+                        async (chunk) => {
+                            terminalSeen ||= chunk.type === 'done';
+                            serverFailure ||= ['error', 'timeout', 'rejected', 'harmful', 'tool-error'].includes(
+                                chunk.type
+                            );
+                            await chunkCallback?.(chunk);
+                        },
+                        responseContext
+                    ),
+                    { signal }
+                );
+            if (options.recoveryState && !terminalSeen) {
+                throw new GenerationInterruptedError();
+            } // calls callbacks with final chunks
+
+            // Stream is complete
+            finalStatus = 'succeeded';
+            await this.notifyResponseComplete(finalStatus, responseContext);
+
+            const decryptedToolCalls = await decryptToolCallArguments(
+                chunkCapture.getPendingClientToolCalls(),
+                encryption
+            );
+
+            return {
+                pendingClientToolCalls: mergePendingClientToolCalls(decryptedToolCalls),
+                status: finalStatus,
+            };
+        } catch (error: any) {
+            // Run response error interceptors
+            await this.notifyResponseError(error, responseContext);
+
+            if (signal?.reason instanceof GenerationInterruptedError) {
+                throw signal.reason;
+            }
+
+            // If the stop button was pressed, we finish gracefully
+            if (error?.name === 'AbortError') {
+                console.warn('Generation aborted');
+                finalStatus = 'succeeded';
+                return { pendingClientToolCalls: [], status: finalStatus };
+            }
+
+            const transportFailure =
+                error instanceof GenerationInterruptedError ||
+                error?.name === 'OfflineError' ||
+                error?.name === 'TimeoutError' ||
+                (options.resumeStream && error?.status === 429) ||
+                (error?.status >= 500 && getTerminalTypeFromApiError(error) === null);
+            if (options.recoveryState && !serverFailure && transportFailure) {
+                throw new GenerationInterruptedError();
+            }
+            throw error;
+        } finally {
+            if (finishCallback) {
+                await finishCallback(finalStatus);
+            }
+        }
+    }
+
+    /******* Request preparation methods *******/
+
+    private prepareChatEndpointPostData(
+        request: LumoApiGenerationRequest,
+        options: {
+            enableReasoning: boolean;
+            modelTier?: LumoApiModelTier;
+            enableAnswerNow?: boolean;
+            target?: LumoCompletionTarget;
+            responseFormat?: ResponseFormat;
+            clientTools?: ChatCompletionsFunctionTool[];
+            serverTools?: ToolName[];
+            featureFlags?: AssistantCallOptions['featureFlags'];
+            clientType?: LumoClientType;
+        }
+    ) {
+        return toChatCompletionsBody(request, {
+            enableReasoning: options.enableReasoning,
+            modelTier: options.modelTier,
+            enableAnswerNow: options.enableAnswerNow,
+            target: options.target,
+            responseFormat: options.responseFormat,
+            clientTools: options.clientTools,
+            serverTools: options.serverTools,
+            featureFlags: options.featureFlags,
+            clientType: options.clientType,
+        });
+    }
+
+    private async prepareGenerationRequest(
+        turns: Turn[],
+        encryption: RequestEncryptionParams | null,
+        flags: GenerationRequestFlags,
+        additionalOptions?: {
+            imageAspectRatio?: ImageAspectRatio;
+        }
+    ): Promise<LumoApiGenerationRequest> {
+        const plaintextRequest = await this.preparePlaintextGenerationRequest(turns, flags, additionalOptions);
+        return this.encryptGenerationRequest(plaintextRequest, encryption);
+    }
+
+    private async preparePlaintextGenerationRequest(
+        turns: Turn[],
+        flags: GenerationRequestFlags,
+        additionalOptions?: {
+            imageAspectRatio?: ImageAspectRatio;
+        }
+    ): Promise<LumoApiGenerationRequest> {
+        const { enableExternalTools, enableImageTools, enableReasoning, enableSuggestedQuestions, clientToolExecutor } =
+            flags;
+        const { imageAspectRatio } = additionalOptions || {};
+
+        const tools = await this.getTools(enableExternalTools, enableImageTools, clientToolExecutor);
+        return {
+            type: 'generation_request',
+            turns: expandToolResultImages(turns),
+            options: {
+                tools,
+                reasoning: enableReasoning,
+                ...(enableImageTools && imageAspectRatio && { image_aspect_ratio: imageAspectRatio }),
+                suggested_questions: enableSuggestedQuestions,
+            },
+        };
+    }
+
+    private async encryptGenerationRequest(
+        request: LumoApiGenerationRequest,
+        encryption: RequestEncryptionParams | null
+    ): Promise<LumoApiGenerationRequest> {
+        if (!encryption) {
+            return request;
+        }
+        return {
+            ...request,
+            turns: await encryptTurns(request.turns, encryption),
+            request_key: (await encryption.encryptRequestKey(this.config.lumoPubKey)) || undefined,
+            request_id: encryption.requestId,
+        };
+    }
+
+    private stripTrailingEmptyAssistant(turns: Turn[]): Turn[] {
+        if (turns.length === 0) {
+            return turns;
+        }
+
+        const last = turns[turns.length - 1];
+        if (last.role === Role.Assistant && !last.content?.trim()) {
+            return turns.slice(0, -1);
+        }
+
+        return turns;
+    }
+
+    private withAssistantReply(turns: Turn[], reply: string): Turn[] {
+        const stripped = this.stripTrailingEmptyAssistant(turns);
+        if (!reply.trim()) {
+            return stripped;
+        }
+
+        return [...stripped, { role: Role.Assistant, content: reply }];
+    }
+
+    private async appendClientToolResults(
+        turns: Turn[],
+        calls: PendingClientToolCall[],
+        executor: ClientToolExecutor,
+        chunkCallback: ChunkCallback | undefined
+    ): Promise<{ turns: Turn[]; endTurn: boolean }> {
+        const executionCalls = executor.prepareCalls?.(calls, { processFiles: !!this.config.processToolFile }) ?? calls;
+        const rawResults = await executor.execute(executionCalls);
+        const results: ClientToolResult[] = [];
+        for (const result of rawResults) {
+            results.push(await processToolFileResult(result, this.config.processToolFile));
+        }
+        // An executor that answers fewer calls than it was given must not take the whole turn down
+        // with it; the model can recover from a per-call error.
+        const executed = calls.map((call, index) => ({ call, result: results[index] ?? missingResultFor(call) }));
+        const nextTurns = [...turns];
+
+        for (const { call, result } of executed) {
+            let parsedArguments: unknown = {};
+            try {
+                parsedArguments = JSON.parse(call.arguments || '{}');
+            } catch {
+                parsedArguments = call.arguments;
+            }
+
+            const toolCallContent = JSON.stringify({
+                id: call.id,
+                name: call.name,
+                arguments: parsedArguments,
+            });
+
+            nextTurns.push({
+                role: Role.ToolCall,
+                content: toolCallContent,
+            });
+
+            nextTurns.push({
+                role: Role.ToolResult,
+                content: result.content,
+                ...(result.images?.length ? { toolImages: result.images } : {}),
+            });
+
+            if (chunkCallback) {
+                // Replace the streamed tool-call block, whose arguments are still U2L
+                // ciphertext, with the decrypted form so it persists and replays correctly.
+                await chunkCallback({
+                    type: 'token_data',
+                    target: 'tool_call',
+                    count: 0,
+                    content: toolCallContent,
+                });
+                await chunkCallback({
+                    type: 'client_tool_result',
+                    content: result.content,
+                    ...(result.images?.length ? { images: result.images } : {}),
+                });
+            }
+        }
+
+        // Errors must remain eligible for a correction round, even if an executor mistakenly marks them terminal.
+        const endTurn = executed.some(({ result }) => result.endTurn === true && !result.is_error);
+        if (!endTurn) {
+            nextTurns.push({
+                role: Role.Assistant,
+                content: '',
+            });
+        }
+
+        return { turns: nextTurns, endTurn };
+    }
+
+    private async runTargetedGeneration(
+        api: Api,
+        turns: Turn[],
+        target: Exclude<LumoCompletionTarget, 'message'>,
+        endpoint: string,
+        signal: AbortSignal | undefined,
+        chunkCallback: ChunkCallback | undefined,
+        encryption: RequestEncryptionParams | null,
+        enableU2LEncryption: boolean,
+        modelTier: AssistantCallOptions['modelTier'] = 'auto',
+        featureFlags?: AssistantCallOptions['featureFlags'],
+        clientType?: LumoClientType
+    ): Promise<void> {
+        const request = await this.prepareGenerationRequest(turns, encryption, {
+            enableExternalTools: false,
+            enableImageTools: false,
+            enableReasoning: false,
+            enableSuggestedQuestions: false,
+        });
+        const context: ResponseContext = {
+            ...this.initializeRequestContext(endpoint, {
+                enableU2LEncryption,
+                enableExternalTools: false,
+            }),
+            startTime: Date.now(),
+            chunkCount: 0,
+            totalContentLength: 0,
+        };
+
+        const auxiliaryContentCallback: ChunkCallback = async (message) => {
+            if ('target' in message && message.target === target) {
+                await chunkCallback?.(message);
+            }
+        };
+        await this.runSseReceiveLoop(
+            api,
+            request,
+            endpoint,
+            signal,
+            encryption,
+            context,
+            auxiliaryContentCallback,
+            undefined,
+            {
+                enableSmoothing: false,
+                target,
+                modelTier,
+                featureFlags,
+                clientType,
+            }
+        );
+    }
+
+    private async getTools(
+        enableExternalTools: boolean,
+        enableImageTools: boolean,
+        clientToolExecutor?: ClientToolExecutor
+    ): Promise<ChatCompletionsTool[]> {
+        const { externalTools, imageTools } = this.config;
+        const builtinTools: ChatCompletionsTool[] = [
+            ...when(enableExternalTools, externalTools).map((name) => ({ name })),
+            ...when(enableImageTools, imageTools).map((name) => ({ name })),
+        ];
+
+        const advertisedClientTools = (await clientToolExecutor?.getClientTools?.()) ?? [];
+        if (advertisedClientTools.length === 0) {
+            return builtinTools;
+        }
+
+        return [...builtinTools, ...advertisedClientTools];
+    }
+
+    /******* Interceptor internal methods *******/
+
+    private initializeRequestContext(
+        endpoint: string,
+        flags: {
+            enableU2LEncryption: boolean;
+            enableExternalTools: boolean;
+        }
+    ) {
+        const { enableU2LEncryption, enableExternalTools } = flags;
+        return {
+            requestId: uuidv4(), // do not use encryption.requestId, which is ONLY meant for cryptographic purposes (AEAD)
+            timestamp: Date.now(),
+            endpoint,
+            enableU2LEncryption,
+            enableExternalTools,
+        };
+    }
+
+    private initializeResponseContext(requestContext: RequestContext): ResponseContext {
+        return {
+            ...requestContext,
+            startTime: Date.now(),
+            chunkCount: 0,
+            totalContentLength: 0,
+        };
+    }
+
+    private async notifyRequestInterceptors(request: LumoApiGenerationRequest, requestContext: RequestContext) {
+        try {
+            return await this.notifyRequest(request, requestContext);
+        } catch (error: any) {
+            // Run request error interceptors
+            await this.notifyRequestError(error, requestContext);
+            throw error;
+        }
+    }
+
+    private async notifyResponseComplete(finalStatus: 'failed' | 'succeeded', responseContext: ResponseContext) {
+        for (const interceptor of this.config.interceptors.response || []) {
+            if (interceptor.onResponseComplete) {
+                await interceptor.onResponseComplete(finalStatus, responseContext);
+            }
+        }
+    }
+
+    private async notifyResponse(
+        value: GenerationResponseMessage,
+        responseContext: ResponseContext
+    ): Promise<GenerationResponseMessage> {
+        // FIXME: The code supports modifying the response chunk, but I don't think we ever need to do it in
+        //        fact. This is further highlighted by the fact that the function
+        //        createContentTransformInterceptor() is never used.
+        //        Another fundamental reason is that we almost never need to transform the individual chunks
+        //        ("hel", "lo", " wor", "ld\n\n") but we often need to transform the overall concatenated string
+        //        ("hello world\n\n" needs trimming)
+        //        TLDR: remove the transform capability
+        for (const interceptor of this.config.interceptors.response || []) {
+            if (interceptor.onResponseChunk) {
+                value = await interceptor.onResponseChunk(value, responseContext);
+            }
+        }
+        return value;
+    }
+
+    private async notifyRequest(request: LumoApiGenerationRequest, requestContext: RequestContext) {
+        for (const interceptor of this.config.interceptors.request || []) {
+            if (interceptor.onRequest) {
+                request = await interceptor.onRequest(request, requestContext);
+            }
+        }
+        return request;
+    }
+
+    private async notifyRequestError(error: any, requestContext: RequestContext) {
+        for (const interceptor of this.config.interceptors.request || []) {
+            if (interceptor.onRequestError) {
+                await interceptor.onRequestError(error, requestContext);
+            }
+        }
+    }
+
+    private async notifyResponseError(error: any, responseContext: ResponseContext) {
+        for (const interceptor of this.config.interceptors.response || []) {
+            if (interceptor.onResponseError) {
+                await interceptor.onResponseError(error, responseContext);
+            }
+        }
+    }
+
+    /******* Interceptor external methods *******/
+
+    /**
+     * Add a request interceptor
+     * @param interceptor - Request interceptor to add
+     */
+    addRequestInterceptor(interceptor: RequestInterceptor): void {
+        if (!this.config.interceptors.request) {
+            this.config.interceptors.request = [];
+        }
+        this.config.interceptors.request.push(interceptor);
+    }
+
+    /**
+     * Add a response interceptor
+     * @param interceptor - Response interceptor to add
+     */
+    addResponseInterceptor(interceptor: ResponseInterceptor): void {
+        if (!this.config.interceptors.response) {
+            this.config.interceptors.response = [];
+        }
+        this.config.interceptors.response.push(interceptor);
+    }
+
+    /**
+     * Remove all interceptors
+     */
+    clearInterceptors(): void {
+        this.clearRequestInterceptors();
+        this.clearResponseInterceptors();
+    }
+
+    /**
+     * Remove request interceptors
+     */
+    clearRequestInterceptors(): void {
+        this.config.interceptors.request = [];
+    }
+
+    /**
+     * Remove response interceptors
+     */
+    clearResponseInterceptors(): void {
+        this.config.interceptors.response = [];
+    }
+
+    /******* Secondary entry points *******/
+
+    /**
+     * Simplified method for quick conversations
+     */
+    async quickChat(
+        api: Api,
+        message: string,
+        options: {
+            enableWebSearch?: boolean;
+            onChunk?: (content: string) => void;
+            signal?: AbortSignal;
+            /** Model to answer with; the default lets the backend choose. */
+            modelTier?: AssistantCallOptions['modelTier'];
+        } = {}
+    ): Promise<string> {
+        const { enableWebSearch = false, onChunk, signal, modelTier } = options;
+        let response = '';
+
+        await this.callAssistant(api, [{ role: Role.User, content: message }], {
+            enableExternalTools: enableWebSearch,
+            enableReasoning: false,
+            signal,
+            ...(modelTier && { modelTier }),
+            chunkCallback: async (msg) => {
+                if (msg.type === 'token_data' && msg.target === 'message') {
+                    response += msg.content;
+                    onChunk?.(msg.content);
+                }
+            },
+        });
+
+        return response;
+    }
+
+    /******* Request builder public methods *******/
+
+    /**
+     * Create a new request builder for fluent API
+     * @returns RequestBuilder instance
+     */
+    createRequest(): RequestBuilder {
+        return new RequestBuilder();
+    }
+
+    /**
+     * Execute a request builder
+     * @param builder RequestBuilder instance
+     * @param api Proton API instance
+     * @returns Promise that resolves when the request completes
+     */
+    async executeRequest(builder: RequestBuilder, api: Api): Promise<void> {
+        const turns = builder.getTurns();
+        const options = builder.getOptions();
+        await this.callAssistant(api, turns, options as AssistantCallOptions);
+    }
+
+    /**
+     * Execute a quick chat request builder
+     * @param builder RequestBuilder instance
+     * @param api Proton API instance
+     * @returns Promise that resolves with the response content
+     */
+    async executeQuickRequest(builder: RequestBuilder, api: Api): Promise<string> {
+        const turns = builder.getTurns();
+
+        const turn = turns[0];
+        if (!turn || turns.length !== 1 || turn.role !== 'user') {
+            throw new Error('Quick requests must contain exactly one user message');
+        }
+
+        const options = builder.getOptions();
+        return this.quickChat(api, turn.content || '', {
+            enableWebSearch: options.enableExternalTools,
+            signal: options.signal,
+        });
+    }
+
+    /******* Config getter/setter *******/
+
+    /**
+     * Get the current configuration
+     * @returns Current client configuration
+     */
+    getConfig(): Readonly<LumoApiClientConfig> {
+        return { ...this.config };
+    }
+
+    /**
+     * Update the client configuration
+     * @param config Partial configuration to merge with current config
+     */
+    updateConfig(config: Partial<LumoApiClientConfig>): void {
+        this.config = { ...this.config, ...config };
+    }
+}

@@ -1,0 +1,170 @@
+import { useState } from 'react';
+
+import { useUser } from '@proton/account/user/hooks';
+import { PLANS } from '@proton/payments/core/constants';
+import { getPlanName, isManagedExternally } from '@proton/payments/core/subscription/helpers';
+import type { Subscription } from '@proton/payments/core/subscription/interface';
+
+import type { ModalProps } from '../../../../components/modalTwo/Modal';
+import ModalTwo from '../../../../components/modalTwo/Modal';
+import { useCancelRenewal } from '../cancelSubscription/useCancelRenewal';
+import FeedbackDowngradeContent, {
+    SUBSCRIPTION_CANCELLATION_REASONS,
+    isKeepSubscription,
+} from '../content/FeedbackDowngradeContent';
+import type { FeedbackDowngradeFormData, FeedbackDowngradeResult } from '../content/interface';
+import { BugOrQualityIssueContent } from './content/BugOrQualityIssueContent';
+import { ConfirmCancellationContent } from './content/ConfirmCancellationContent';
+import { DifferentAccountContent } from './content/DifferentAccountContent';
+import { DifferentProviderContent } from './content/DifferentProviderContent';
+import { ManagedExternallyContent } from './content/ManagedExternallyContent';
+import { MissingFeatureContent } from './content/MissingFeatureContent';
+import { OfferContent } from './content/OfferContent';
+import { TemporaryNeedContent } from './content/TemporaryNeedContent';
+import { useCancellationOffer } from './hooks/useCancellationOffer';
+import { useFeedbackFirstTelemetry } from './hooks/useFeedbackFirstTelemetry';
+
+import './FeedbackFirstCancellation.scss';
+
+enum CANCELLATION_STEPS {
+    FEEDBACK = 0,
+    MISSING_FEATURE = 1,
+    GET_HELP = 2,
+    OFFER = 3,
+    TEMPORARY_NEED = 4,
+    CONFIRM = 5,
+    DIFFERENT_ACCOUNT = 6,
+    DIFFERENT_PROVIDER = 7,
+    MANAGED_EXTERNALLY = 8,
+}
+
+interface Props extends ModalProps {
+    subscription: Subscription;
+    onCancelled: () => void;
+}
+
+export const FeedbackFirstCancellation = ({ subscription, onCancelled, ...modalProps }: Props) => {
+    const [step, setStep] = useState(CANCELLATION_STEPS.FEEDBACK);
+    const [user] = useUser();
+    const [feedback, setFeedback] = useState<FeedbackDowngradeFormData | undefined>();
+    const offerData = useCancellationOffer(subscription);
+    const { cancelSubscriptionRenewal } = useCancelRenewal();
+
+    const { sendFeedbackReport, sendSecondStepReport, sendConfirmCancellation, sendManagedExternally } =
+        useFeedbackFirstTelemetry(subscription);
+
+    const closeModal = () => {
+        modalProps.onClose?.();
+    };
+
+    const isDrivePlan = () => {
+        const planName = getPlanName(subscription);
+        return planName === PLANS.DRIVE || planName === PLANS.DRIVE_1TB;
+    };
+
+    const getNextStepFromFeedback = (reason: SUBSCRIPTION_CANCELLATION_REASONS): CANCELLATION_STEPS => {
+        if (isDrivePlan()) {
+            return CANCELLATION_STEPS.TEMPORARY_NEED;
+        }
+        switch (reason) {
+            case SUBSCRIPTION_CANCELLATION_REASONS.MISSING_FEATURE:
+                return CANCELLATION_STEPS.MISSING_FEATURE;
+            case SUBSCRIPTION_CANCELLATION_REASONS.QUALITY_ISSUE:
+                return CANCELLATION_STEPS.GET_HELP;
+            case SUBSCRIPTION_CANCELLATION_REASONS.SWITCHING_TO_DIFFERENT_SERVICE:
+                return CANCELLATION_STEPS.DIFFERENT_PROVIDER;
+            case SUBSCRIPTION_CANCELLATION_REASONS.DIFFERENT_ACCOUNT:
+                return CANCELLATION_STEPS.DIFFERENT_ACCOUNT;
+            case SUBSCRIPTION_CANCELLATION_REASONS.TEMPORARY:
+                return CANCELLATION_STEPS.TEMPORARY_NEED;
+            case SUBSCRIPTION_CANCELLATION_REASONS.TOO_EXPENSIVE:
+                return offerData.offerIsAvailable ? CANCELLATION_STEPS.OFFER : CANCELLATION_STEPS.TEMPORARY_NEED;
+            default:
+                return CANCELLATION_STEPS.TEMPORARY_NEED;
+        }
+    };
+
+    const handleFeedbackResolve = (result: FeedbackDowngradeResult) => {
+        if (isKeepSubscription(result)) {
+            closeModal();
+            return;
+        }
+        setFeedback(result);
+
+        const reason = result.Reason as SUBSCRIPTION_CANCELLATION_REASONS;
+        setStep(getNextStepFromFeedback(reason));
+        sendFeedbackReport(result);
+    };
+
+    const handleContinueToConfirm = () => {
+        setStep(CANCELLATION_STEPS.CONFIRM);
+        sendSecondStepReport(feedback);
+    };
+
+    const handleConfirmCancellation = async () => {
+        if (isManagedExternally(subscription)) {
+            sendManagedExternally();
+            setStep(CANCELLATION_STEPS.MANAGED_EXTERNALLY);
+            return;
+        }
+
+        await cancelSubscriptionRenewal(
+            subscription,
+            feedback ?? { Reason: '', Feedback: '', ReasonDetails: '', Context: 'mail' },
+            false
+        );
+        sendConfirmCancellation();
+
+        closeModal();
+        onCancelled();
+    };
+
+    return (
+        <ModalTwo className="feedback-first-cancellation-modal" size="xlarge" {...modalProps}>
+            {step === CANCELLATION_STEPS.FEEDBACK && (
+                <FeedbackDowngradeContent user={user} subscription={subscription} onResolve={handleFeedbackResolve} />
+            )}
+            {step === CANCELLATION_STEPS.MISSING_FEATURE && (
+                <MissingFeatureContent onKeepPlan={closeModal} onContinueCancelling={handleContinueToConfirm} />
+            )}
+            {step === CANCELLATION_STEPS.OFFER && (
+                <OfferContent
+                    onKeepPlan={closeModal}
+                    onContinueCancelling={handleContinueToConfirm}
+                    offerData={offerData}
+                />
+            )}
+            {step === CANCELLATION_STEPS.TEMPORARY_NEED && (
+                <TemporaryNeedContent
+                    subscription={subscription}
+                    onKeepPlan={closeModal}
+                    onContinueCancelling={handleContinueToConfirm}
+                />
+            )}
+            {step === CANCELLATION_STEPS.DIFFERENT_ACCOUNT && (
+                <DifferentAccountContent onContinueCancelling={handleContinueToConfirm} onKeepPlan={closeModal} />
+            )}
+            {step === CANCELLATION_STEPS.GET_HELP && (
+                <BugOrQualityIssueContent onContinueCancelling={handleContinueToConfirm} onKeepPlan={closeModal} />
+            )}
+            {step === CANCELLATION_STEPS.DIFFERENT_PROVIDER && (
+                <DifferentProviderContent
+                    subscription={subscription}
+                    onKeepPlan={closeModal}
+                    onContinueCancelling={handleContinueToConfirm}
+                    feedbackReason={feedback?.ReasonDetails}
+                />
+            )}
+            {step === CANCELLATION_STEPS.CONFIRM && (
+                <ConfirmCancellationContent
+                    subscription={subscription}
+                    onKeepPlan={closeModal}
+                    onCancelSubscription={handleConfirmCancellation}
+                />
+            )}
+            {step === CANCELLATION_STEPS.MANAGED_EXTERNALLY && (
+                <ManagedExternallyContent subscription={subscription} onClose={closeModal} />
+            )}
+        </ModalTwo>
+    );
+};

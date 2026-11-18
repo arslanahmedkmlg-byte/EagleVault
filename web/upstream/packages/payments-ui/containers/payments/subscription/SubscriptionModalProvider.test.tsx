@@ -1,0 +1,270 @@
+import { act, screen, waitFor } from '@testing-library/react';
+import cloneDeep from 'lodash/cloneDeep';
+
+import { getModelState } from '@proton/account/testing/getModelState';
+import type { OpenSubscriptionModalCallback } from '@proton/components/containers/payments/subscription/subscriptionModalContext';
+import { useSubscriptionModal } from '@proton/components/containers/payments/subscription/subscriptionModalContext';
+import { userDefault } from '@proton/components/hooks/helpers/tests/useUser';
+import { mockOrganizationApi } from '@proton/components/hooks/helpers/tests/vitest/useOrganization';
+import { mockStatusApi } from '@proton/components/hooks/helpers/tests/vitest/usePaymentStatus';
+import { mockPlansApi } from '@proton/components/hooks/helpers/tests/vitest/usePlans';
+import {
+    mockSubscriptionApi,
+    subscriptionDefaultResponse,
+} from '@proton/components/hooks/helpers/tests/vitest/useSubscription';
+import { renderWithProviders } from '@proton/components/testing/vitest/renderWithProviders';
+import { formatSubscription } from '@proton/payments/core/api/api';
+import { PLANS } from '@proton/payments/core/constants';
+import { getSubscriptionState } from '@proton/payments/testing/redux-state';
+import { Audience } from '@proton/shared/lib/interfaces/Subscription';
+import type { UserSettings } from '@proton/shared/lib/interfaces/UserSettings';
+import { SubscriptionPlatform } from '@proton/shared/lib/payments/subscription/constants';
+
+import SubscriptionContainer from './SubscriptionContainer';
+import SubscriptionModalProvider from './SubscriptionModalProvider';
+
+vi.mock('@proton/components/hooks/useModals', () => ({
+    default: vi.fn().mockReturnValue({ createModal: vi.fn() }),
+}));
+vi.mock('@proton/atoms/Portal/Portal');
+vi.mock('./SubscriptionContainer');
+vi.mock('@proton/features/useFeature', () => ({ default: () => ({}) }));
+
+// userSettings has no default in the shared preloaded state; without it the model auto-fetches
+// (on a timer) and throws because the test store has no thunk `api`. Preload it so it never fetches.
+const userSettingsPreloadedState = { userSettings: getModelState({} as UserSettings) };
+
+beforeEach(() => {
+    vi.clearAllMocks();
+    mockSubscriptionApi();
+    mockOrganizationApi();
+    mockPlansApi();
+    mockStatusApi();
+});
+
+it('should render', async () => {
+    const { container } = renderWithProviders(
+        <SubscriptionModalProvider app="proton-account">My content</SubscriptionModalProvider>,
+        {
+            preloadedState: {
+                ...userSettingsPreloadedState,
+                user: getModelState(userDefault),
+            },
+        }
+    );
+
+    await waitFor(() => {
+        expect(container).toHaveTextContent('My content');
+    });
+});
+
+it('should render <SubscriptionContainer> if there is no legacy plans', async () => {
+    let openSubscriptionModal!: OpenSubscriptionModalCallback;
+    const ContextReaderComponent = () => {
+        const modal = useSubscriptionModal();
+        openSubscriptionModal = modal[0];
+
+        return null;
+    };
+
+    renderWithProviders(
+        <SubscriptionModalProvider app="proton-account">
+            <ContextReaderComponent />
+        </SubscriptionModalProvider>,
+        { preloadedState: userSettingsPreloadedState }
+    );
+
+    await waitFor(() => {
+        expect(openSubscriptionModal).toBeDefined();
+    });
+    await act(async () => {
+        await openSubscriptionModal({} as any);
+    });
+
+    await screen.findByText('SubscriptionContainer');
+});
+
+it('should render <SubscriptionContainer> with B2B default audience if it was selected in the callback', async () => {
+    let openSubscriptionModal!: OpenSubscriptionModalCallback;
+    const ContextReaderComponent = () => {
+        const modal = useSubscriptionModal();
+        openSubscriptionModal = modal[0];
+
+        return null;
+    };
+
+    const { container } = renderWithProviders(
+        <SubscriptionModalProvider app="proton-account">
+            <ContextReaderComponent />
+        </SubscriptionModalProvider>,
+        { preloadedState: userSettingsPreloadedState }
+    );
+
+    await waitFor(() => {
+        expect(openSubscriptionModal).toBeDefined();
+    });
+
+    await act(async () => {
+        await openSubscriptionModal({ defaultAudience: Audience.B2B } as any);
+    });
+
+    expect(vi.mocked(SubscriptionContainer).mock.calls.map(([props]) => props)).toContainEqual(
+        expect.objectContaining({
+            defaultAudience: Audience.B2B,
+        })
+    );
+
+    expect(container).toHaveTextContent('SubscriptionContainer');
+});
+
+it('should render <SubscriptionContainer> with the requested plan, so it can pick the B2B audience', async () => {
+    let openSubscriptionModal!: OpenSubscriptionModalCallback;
+    const ContextReaderComponent = () => {
+        const modal = useSubscriptionModal();
+        openSubscriptionModal = modal[0];
+
+        return null;
+    };
+
+    const { container } = renderWithProviders(
+        <SubscriptionModalProvider app="proton-account">
+            <ContextReaderComponent />
+        </SubscriptionModalProvider>,
+        { preloadedState: userSettingsPreloadedState }
+    );
+
+    await waitFor(() => {
+        expect(openSubscriptionModal).toBeDefined();
+    });
+
+    await act(async () => {
+        await openSubscriptionModal({ plan: PLANS.BUNDLE_PRO } as any);
+    });
+
+    expect(vi.mocked(SubscriptionContainer).mock.calls.map(([props]) => props)).toContainEqual(
+        expect.objectContaining({
+            plan: PLANS.BUNDLE_PRO,
+        })
+    );
+
+    expect(container).toHaveTextContent('SubscriptionContainer');
+});
+
+it('should render <SubscriptionContainer> with the current B2B subscription, so it can pick the B2B audience', async () => {
+    const subscription = cloneDeep(subscriptionDefaultResponse);
+    subscription.Subscription.Plans = [
+        {
+            Name: PLANS.BUNDLE_PRO,
+        } as any,
+    ];
+    mockSubscriptionApi(subscription);
+
+    let openSubscriptionModal!: OpenSubscriptionModalCallback;
+    const ContextReaderComponent = () => {
+        const modal = useSubscriptionModal();
+        openSubscriptionModal = modal[0];
+
+        return null;
+    };
+
+    const { container } = renderWithProviders(
+        <SubscriptionModalProvider app="proton-account">
+            <ContextReaderComponent />
+        </SubscriptionModalProvider>,
+        {
+            preloadedState: {
+                ...userSettingsPreloadedState,
+                subscription: getSubscriptionState(
+                    formatSubscription(subscription.Subscription, subscription.UpcomingSubscription, undefined)
+                ),
+            },
+        }
+    );
+
+    await waitFor(() => {
+        expect(openSubscriptionModal).toBeDefined();
+    });
+
+    await act(async () => {
+        await openSubscriptionModal({} as any);
+    });
+
+    expect(vi.mocked(SubscriptionContainer).mock.calls.map(([props]) => props)).toContainEqual(
+        expect.objectContaining({
+            subscription: expect.objectContaining({
+                Plans: [expect.objectContaining({ Name: PLANS.BUNDLE_PRO })],
+            }),
+        })
+    );
+
+    expect(container).toHaveTextContent('SubscriptionContainer');
+});
+
+it('should render <SubscriptionContainer> with FAMILY default audience if it is selected', async () => {
+    let openSubscriptionModal!: OpenSubscriptionModalCallback;
+    const ContextReaderComponent = () => {
+        const modal = useSubscriptionModal();
+        openSubscriptionModal = modal[0];
+
+        return null;
+    };
+
+    const { container } = renderWithProviders(
+        <SubscriptionModalProvider app="proton-account">
+            <ContextReaderComponent />
+        </SubscriptionModalProvider>,
+        { preloadedState: userSettingsPreloadedState }
+    );
+
+    await waitFor(() => {
+        expect(openSubscriptionModal).toBeDefined();
+    });
+
+    await act(async () => {
+        await openSubscriptionModal({ defaultAudience: Audience.FAMILY } as any);
+    });
+
+    expect(vi.mocked(SubscriptionContainer).mock.calls.map(([props]) => props)).toContainEqual(
+        expect.objectContaining({
+            defaultAudience: Audience.FAMILY,
+        })
+    );
+
+    expect(container).toHaveTextContent('SubscriptionContainer');
+});
+
+it('should render <InAppPurchaseModal> if subscription is managed externally', async () => {
+    const subscription = cloneDeep(subscriptionDefaultResponse);
+    subscription.Subscription.External = SubscriptionPlatform.Android;
+
+    let openSubscriptionModal!: OpenSubscriptionModalCallback;
+    const ContextReaderComponent = () => {
+        const modal = useSubscriptionModal();
+        openSubscriptionModal = modal[0];
+
+        return null;
+    };
+
+    renderWithProviders(
+        <SubscriptionModalProvider app="proton-account">
+            <ContextReaderComponent />
+        </SubscriptionModalProvider>,
+        {
+            preloadedState: {
+                ...userSettingsPreloadedState,
+                subscription: getSubscriptionState(
+                    formatSubscription(subscription.Subscription, subscription.UpcomingSubscription, undefined)
+                ),
+            },
+        }
+    );
+
+    await waitFor(() => {
+        expect(openSubscriptionModal).toBeDefined();
+    });
+    await act(async () => {
+        await openSubscriptionModal({} as any);
+    });
+
+    expect(await screen.findByTestId('InAppPurchaseModal/text')).not.toBeEmptyDOMElement();
+});

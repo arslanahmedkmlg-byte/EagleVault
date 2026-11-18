@@ -1,0 +1,295 @@
+import type { PrivateKeyReference, PublicKeyReference } from '@protontech/crypto';
+import { logger } from '@protontech/logger';
+import { c } from 'ttag';
+
+import { generateCid, isEmbeddable } from '@proton/mail-message/helpers/message/messageEmbeddeds';
+import type {
+    MessageState,
+    MessageStateWithData,
+    PublicPrivateKey,
+} from '@proton/mail-message/store/messages/messagesTypes';
+import { uploadAttachment } from '@proton/shared/lib/api/attachments';
+import removeExifMetadata from '@proton/shared/lib/helpers/exif';
+import { readFileAsBuffer } from '@proton/shared/lib/helpers/file';
+import { shortHumanSize } from '@proton/shared/lib/helpers/humanSize';
+import { SentryMailInitiatives, traceError } from '@proton/shared/lib/helpers/sentry';
+import { generateProtonWebUID } from '@proton/shared/lib/helpers/uid';
+import type { Attachment } from '@proton/shared/lib/interfaces/mail/Message';
+import type { Packets } from '@proton/shared/lib/interfaces/mail/crypto';
+import { ATTACHMENT_DISPOSITION } from '@proton/shared/lib/mail/constants';
+import { getAttachments } from '@proton/shared/lib/mail/messages';
+import { encryptAttachment } from '@proton/shared/lib/mail/send/attachments';
+import generateUID from '@proton/utils/generateUID';
+
+import type { Upload, UploadResult } from '../../attachments/uploadTypes';
+import {
+    ATTACHMENT_MAX_SIZE,
+    MESSAGE_ALREADY_SENT_INTERNAL_ERROR,
+    STORAGE_QUOTA_EXCEEDED_INTERNAL_ERROR,
+    UPLOAD_ATTACHMENT_ERROR_CODES,
+} from '../../constants';
+import type { RequestParams, UploadConfig } from '../upload';
+import { upload as uploadHelper } from '../upload';
+
+type UploadQueryResult = Promise<{
+    Code: number;
+    Attachment: Attachment;
+    Error?: string;
+}>;
+
+const getAttachementEncryptionFailedErrorMessage = () => {
+    return c('Error').t`Failed to encrypt attachment. Please try again.`;
+};
+
+/**
+ * Read the file locally, and encrypt it. return the encrypted file.
+ */
+export const encryptFile = async (
+    file: File,
+    inline: boolean,
+    encryptionKey: PublicKeyReference,
+    signingKeys?: PrivateKeyReference[]
+) => {
+    if (!file) {
+        throw new TypeError(c('Error').t`You did not provide a file.`);
+    }
+    try {
+        const result = await readFileAsBuffer(file);
+        return await encryptAttachment(new Uint8Array(result), file, inline, encryptionKey, signingKeys);
+    } catch (e: any) {
+        traceError(e, {
+            extra: {
+                mimeType: file.type,
+                size: file.size,
+                inline,
+            },
+            tags: {
+                initiative: SentryMailInitiatives.ATTACHMENT_ENCRYPTION_ERROR,
+            },
+        });
+        throw new Error(getAttachementEncryptionFailedErrorMessage());
+    }
+};
+
+/**
+ * Add a new attachment, upload it to the server
+ */
+const uploadFile = (
+    file: File,
+    message: MessageStateWithData,
+    messageKeys: PublicPrivateKey,
+    inline: boolean,
+    uid: string,
+    config: UploadConfig,
+    cid = ''
+): Upload<UploadResult> => {
+    const uploadStartTime = Date.now();
+
+    const titleImage = c('Title').t`Image`;
+
+    const filename = file.name || `${titleImage} ${getAttachments(message.data).length + 1}`;
+    const ContentID = inline ? cid || generateCid(generateProtonWebUID(), message.data?.Sender?.Address || '') : '';
+
+    let packets: Packets;
+
+    const getParams = async () => {
+        packets = await encryptFile(file, inline, messageKeys.encryptionKey, messageKeys.signingKeys);
+
+        return uploadAttachment({
+            Filename: packets.Filename || filename,
+            MessageID: message.data.ID,
+            ContentID,
+            MIMEType: packets.MIMEType,
+            KeyPackets: new Blob([packets.keys]),
+            DataPacket: new Blob([packets.data]),
+            Signature: packets.signature ? new Blob([packets.signature]) : undefined,
+        }) as RequestParams;
+    };
+
+    const upload = uploadHelper(uid, getParams(), config) as Upload<UploadQueryResult>;
+
+    const attachPackets = async () => {
+        try {
+            const result = await upload.resultPromise;
+
+            if (result?.Code === UPLOAD_ATTACHMENT_ERROR_CODES.MESSAGE_ALREADY_SENT) {
+                throw new Error(MESSAGE_ALREADY_SENT_INTERNAL_ERROR);
+            } else if (result?.Code === UPLOAD_ATTACHMENT_ERROR_CODES.STORAGE_QUOTA_EXCEEDED) {
+                throw new Error(STORAGE_QUOTA_EXCEEDED_INTERNAL_ERROR);
+            }
+
+            // TODO: We might need to check for other error codes here.
+
+            logger.info(
+                `Attachment uploaded successfully (${shortHumanSize(file.size)}, ${Date.now() - uploadStartTime}ms)`
+            );
+
+            return { attachment: result.Attachment, packets, addressID: message.data.AddressID };
+        } catch (error: any) {
+            const errorMessage = error?.message;
+            const isKnownBusinessError =
+                errorMessage === MESSAGE_ALREADY_SENT_INTERNAL_ERROR ||
+                errorMessage === STORAGE_QUOTA_EXCEEDED_INTERNAL_ERROR;
+            // Encryption errors are already reported in encryptFile; they bubble up here with the localized "Failed to encrypt attachment" message and should not be re-traced.
+            const isEncryptionError = errorMessage === getAttachementEncryptionFailedErrorMessage();
+
+            logger.error(
+                `Failed to upload attachment (${shortHumanSize(file.size)}, ${Date.now() - uploadStartTime}ms)`,
+                error
+            );
+
+            if (!isKnownBusinessError && !isEncryptionError) {
+                traceError(error, {
+                    extra: {
+                        mimeType: file.type,
+                        size: file.size,
+                        inline,
+                    },
+                    tags: {
+                        initiative: SentryMailInitiatives.ATTACHMENT_UPLOAD_ERROR,
+                    },
+                });
+            }
+            throw error;
+        }
+    };
+
+    return {
+        ...upload,
+        resultPromise: attachPackets(),
+    };
+};
+
+const buildHeaders = ({ Inline }: Packets, message: MessageStateWithData) => {
+    if (!Inline) {
+        return {};
+    }
+
+    const cid = generateCid(generateProtonWebUID(), message.data?.Sender?.Address || '');
+    return {
+        'content-disposition': ATTACHMENT_DISPOSITION.INLINE,
+        'content-id': cid,
+    };
+};
+
+const packetToAttachment = (packet: Packets, message: MessageStateWithData) => {
+    return {
+        ID: generateUID('att'),
+        Name: packet.Filename,
+        Size: packet.FileSize,
+        MIMEType: packet.MIMEType,
+        KeyPackets: new Blob([packet.keys]),
+        DataPacket: new Blob([packet.data]),
+        Preview: packet.Preview,
+        Headers: buildHeaders(packet, message),
+    };
+};
+
+/**
+ * Add a new EO attachment
+ */
+const uploadEOFile = (
+    file: File,
+    message: MessageStateWithData,
+    encryptionKey: PublicKeyReference,
+    inline: boolean
+): Promise<{ attachment: Attachment; packets: Packets }> => {
+    const getAttachment = async () => {
+        const packets = (await encryptFile(file, inline, encryptionKey)) as Packets;
+
+        return { attachment: packetToAttachment(packets, message) as Attachment, packets };
+    };
+
+    return getAttachment();
+};
+
+/**
+ * Upload a list of attachments [...File]
+ */
+export const upload = (
+    files: File[] = [],
+    message: MessageStateWithData,
+    messageKeys: PublicPrivateKey,
+    action = ATTACHMENT_DISPOSITION.ATTACHMENT,
+    uid: string,
+    config: UploadConfig,
+    cid = ''
+): Upload<UploadResult>[] => {
+    return files.map((file) => {
+        const inline = isEmbeddable(file.type) && action === ATTACHMENT_DISPOSITION.INLINE;
+        return uploadFile(file, message, messageKeys, inline, uid, config, cid);
+    });
+};
+
+export const uploadEO = async (
+    file: File,
+    message: MessageStateWithData,
+    encryptionKey: PublicKeyReference,
+    action = ATTACHMENT_DISPOSITION.ATTACHMENT,
+    removeImageMetadata?: boolean
+) => {
+    const inline = isEmbeddable(file.type) && action === ATTACHMENT_DISPOSITION.INLINE;
+    const updatedFile = removeImageMetadata ? await removeExifMetadata(file).catch(() => file) : file;
+    return uploadEOFile(updatedFile, message, encryptionKey, inline);
+};
+
+/**
+ * Is current attachments plus eventual files to upload will exceed the max size
+ */
+const isSizeExceeded = (message: MessageState, files: File[] = []) => {
+    const attachments = getAttachments(message.data);
+    const attachmentsSize = attachments.reduce((acc, attachment) => acc + (attachment.Size || 0), 0);
+    const filesSize = files.reduce((acc, file) => acc + (file.size || 0), 0);
+    return attachmentsSize + filesSize > ATTACHMENT_MAX_SIZE;
+};
+
+/**
+ * Is current attachments plus eventual files to upload will exceed the max count
+ */
+const isCountExceeded = (message: MessageState, files: File[] = [], attachmentsLengthLimit: number) => {
+    const attachments = getAttachments(message.data);
+    const attachmentsCount = attachments.length + files.length;
+
+    return attachmentsCount > attachmentsLengthLimit;
+};
+
+interface CheckSizeAndLengthOptions {
+    createNotification: any;
+    message: MessageState;
+    files: File[];
+    pendingUploadFiles?: File[];
+    attachmentsCountLimit: number;
+}
+
+export const checkSizeAndLength = ({
+    createNotification,
+    message,
+    files,
+    pendingUploadFiles = [],
+    attachmentsCountLimit,
+}: CheckSizeAndLengthOptions) => {
+    const totalFiles = [...files, ...pendingUploadFiles];
+    const sizeExcedeed = isSizeExceeded(message, totalFiles);
+    const countExceeded = isCountExceeded(message, totalFiles, attachmentsCountLimit);
+
+    if (countExceeded) {
+        /*
+         * translator: attachmentsCountLimit is the number of attachments maximum that we can have in a message
+         * Example : Maximum number of attachments (100) exceeded.
+         */
+        createNotification({
+            type: 'error',
+            text: c('Error').t`Maximum number of attachments (${attachmentsCountLimit}) exceeded`,
+        });
+    }
+
+    if (sizeExcedeed) {
+        const readableAttachmentMaxSize = shortHumanSize(ATTACHMENT_MAX_SIZE);
+        createNotification({
+            type: 'error',
+            text: c('Error').t`Attachments are limited to ${readableAttachmentMaxSize}`,
+        });
+    }
+
+    return sizeExcedeed || countExceeded;
+};

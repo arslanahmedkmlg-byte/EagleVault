@@ -1,0 +1,402 @@
+@use '~@proton/styles/scss/lib/config' as *;
+@use '~@proton/styles/scss/lib/rem' as *;
+
+// Scoped token layer for the Lumo design language. A consumer wraps its subtree in `.lumo-ui` to opt
+// into the tuned palette; every component below also names a raw theme-token fallback, so each element
+// still renders correctly on its own. Every value maps to a real Proton theme token — no hard-coded
+// hex — so light/dark/contrast themes keep working automatically.
+.lumo-ui {
+	--lumo-surface: var(--background-norm);
+	--lumo-surface-soft: var(--background-weak);
+	--lumo-accent: var(--interaction-norm);
+	--lumo-accent-tint: var(--interaction-norm-minor-2);
+	--lumo-text: var(--text-norm);
+	--lumo-text-weak: var(--text-weak);
+	--lumo-border: var(--border-weak);
+	--lumo-radius-card: var(--border-radius-lg);
+	--lumo-radius-pill: var(--border-radius-full);
+	--lumo-ease: 0.2s ease-in-out;
+}
+
+// The generating cat + a pulsing status label, shown while the assistant works. The artwork under-fills
+// its own transparent canvas, so the box is sized up and the <img> fills it.
+.lumo-thinking {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 0.5rem;
+
+	&__cat {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		inline-size: rem(40);
+		block-size: rem(40);
+		line-height: 0;
+
+		> img {
+			inline-size: 100%;
+			block-size: 100%;
+		}
+	}
+
+	// Gentle pulse on the label, echoing lumo.proton.me's shimmering status text.
+	&__text {
+		animation: lumo-busy-pulse 1.6s ease-in-out infinite;
+	}
+}
+
+@keyframes lumo-busy-pulse {
+	0%,
+	100% {
+		opacity: 0.45;
+	}
+
+	50% {
+		opacity: 1;
+	}
+}
+
+// Slim indeterminate progress bar.
+.lumo-loading-bar {
+	position: relative;
+	block-size: rem(2);
+	inline-size: 100%;
+	overflow: hidden;
+	border-radius: var(--border-radius-full);
+	background-color: var(--lumo-surface-soft, var(--background-weak));
+
+	&__indicator {
+		position: absolute;
+		inset-block: 0;
+		inline-size: 40%;
+		border-radius: inherit;
+		background-color: var(--lumo-accent, var(--interaction-norm));
+		animation: lumo-loading-slide 1.2s ease-in-out infinite;
+	}
+}
+
+@keyframes lumo-loading-slide {
+	0% {
+		inset-inline-start: -40%;
+	}
+
+	100% {
+		inset-inline-start: 100%;
+	}
+}
+
+// Expandable one-line disclosure (shared by the chip + server-tool chip). Payload reveals in-flow.
+.lumo-disclosure {
+	min-inline-size: 0;
+
+	// The global `details` rule adds a hairline above/below every <details>; these sit inline in a
+	// chat with no divider, so strip it.
+	&,
+	&:first-child {
+		border-block: 0;
+	}
+
+	&__summary {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		cursor: pointer;
+		color: var(--lumo-text-weak, var(--text-weak));
+		list-style: none;
+
+		&::-webkit-details-marker {
+			display: none;
+		}
+	}
+
+	&__chevron {
+		transition: transform var(--lumo-ease, 0.2s ease-in-out);
+	}
+
+	&[open] &__chevron {
+		transform: rotate(180deg);
+	}
+}
+
+// Chip payload: a quiet monospace footnote that keeps its formatting and scrolls in its own box, so a
+// long line can never widen or overlay the host.
+.lumo-chip__payload {
+	max-inline-size: 100%;
+	margin-block: 0.5rem 0;
+	padding: 0.5rem;
+	border-radius: var(--border-radius-md);
+	background-color: var(--lumo-surface-soft, var(--background-weak));
+	font-family: monospace;
+	white-space: pre;
+	overflow-x: auto;
+}
+
+// Server-tool transparency marker + its cited-sources list.
+.lumo-server-tool {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	min-inline-size: 0;
+
+	&__sources {
+		padding-inline-start: 1.25rem;
+	}
+
+	&__source {
+		display: block;
+		min-inline-size: 0;
+		text-decoration: none;
+
+		&:hover .lumo-server-tool__source-title {
+			text-decoration: underline;
+		}
+	}
+
+	&__source-title {
+		color: var(--lumo-text, var(--text-norm));
+	}
+}
+
+// The composer: a rounded, glowing box holding an auto-growing textarea, with the circular send/stop
+// button pinned bottom-right OUT OF FLOW. Because the button is out of flow, it toggling never changes
+// the box height — the box hugs one line to start (and collapses back to one line after send), and only
+// typed content wrapping to further lines grows it, the button then holding the bottom-right corner.
+.lumo-prompt-input {
+	position: relative;
+	min-inline-size: 0;
+
+	// Resting height equals the send button plus a 4px margin each side (rem(40) = rem(32) + 2 × rem(4)).
+	// The field's own line-height + padding fill exactly this on one line, so the text is centred by its
+	// padding and the bottom-pinned button lands on the same centre; extra lines just grow the box.
+	min-block-size: rem(40);
+	padding-inline: rem(12);
+	border-radius: var(--border-radius-xl);
+	border: 1px solid var(--lumo-border, var(--border-weak));
+	background-color: var(--lumo-surface, var(--background-norm));
+	transition:
+		border-color var(--lumo-ease, 0.2s ease-in-out),
+		box-shadow var(--lumo-ease, 0.2s ease-in-out);
+
+	&:focus-within {
+		border-color: var(--lumo-accent, var(--interaction-norm));
+		box-shadow: 0 0 0 3px var(--focus-ring);
+	}
+
+	// The textarea owns no chrome — the wrapper is the affordance. It spans the full width and reserves
+	// room on the right for the pinned button, so the button appearing never slides the text or the box.
+	// A fixed line-height + symmetric vertical padding make one line fill the box exactly, centring the
+	// text; each further line then grows the box by one line-height.
+	&__field {
+		display: block;
+		inline-size: 100%;
+		min-inline-size: 0;
+		max-block-size: 12rem;
+		padding-block: rem(10);
+		padding-inline-end: rem(28);
+		overflow-y: auto;
+		border: 0;
+		background: transparent;
+		color: var(--lumo-text, var(--text-norm));
+		font: inherit;
+		line-height: rem(20);
+
+		&:focus {
+			outline: 0;
+		}
+	}
+
+	// Circular send/stop button pinned bottom-right, absolutely positioned so it never affects the box
+	// height; the box's min-block-size hugs it on a single line and it holds the corner as text wraps. The
+	// SVGs are self-contained button graphics, so let the image fill the button.
+	&__send {
+		position: absolute;
+		inset-block-end: rem(4);
+		inset-inline-end: rem(4);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		inline-size: rem(32);
+		block-size: rem(32);
+		padding: 0;
+
+		> img {
+			display: block;
+			inline-size: 100%;
+			block-size: 100%;
+		}
+	}
+}
+
+// A check-list row, and the unit the confirm-card body's peek is measured in. Declared once so the row
+// and the peek that counts it can never drift apart. The box is two lines tall whether or not the row
+// carries a subtitle, so a list mixing the two still measures in whole rows.
+$lumo-row-line: rem(20);
+$lumo-row-padding: rem(4);
+$lumo-row-height: $lumo-row-line * 2 + $lumo-row-padding * 2;
+
+// Confirm-card chrome: a calm surface ruled into band / body / footer, never a destructive alert.
+.lumo-confirm-card {
+	inline-size: 100%;
+	min-inline-size: 0;
+	background-color: var(--lumo-surface, var(--background-norm));
+	border: 1px solid var(--lumo-border, var(--border-weak));
+	border-radius: var(--lumo-radius-card, var(--border-radius-lg));
+
+	// The band is filled, so the corners have to clip it rather than let it square them off.
+	overflow: hidden;
+
+	// That clip also zeroes the card's automatic minimum size, so a flex host with a full scroller beside
+	// it crushes the chrome to nothing. The body is capped below, so the card never needs to give.
+	flex-shrink: 0;
+
+	&__band,
+	&__footer {
+		padding: var(--space-3);
+	}
+
+	// Filled as well as ruled: the sentence is the card's subject, and the fill is what separates it from
+	// the body without a second rule.
+	&__band {
+		border-block-end: 1px solid var(--lumo-border, var(--border-weak));
+		background-color: var(--lumo-surface-soft, var(--background-weak));
+	}
+
+	&__footer {
+		border-block-start: 1px solid var(--lumo-border, var(--border-weak));
+	}
+
+	// One line tall, so the glyph centres on the sentence's first line rather than on a box of its own.
+	&__glyph {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		inline-size: rem(20);
+		block-size: rem(20);
+		block-size: 1lh; // Dropped below Safari 18 / Chrome 121, which the line above covers.
+		color: var(--lumo-accent, var(--interaction-norm));
+	}
+
+	&__sentence {
+		min-inline-size: 0;
+	}
+
+	// Chained to `Scroll`'s own class throughout: the atom styles these same elements at equal
+	// specificity, so an unchained override would be decided by stylesheet order alone.
+	&__body.scroll-outer-vertical {
+		padding-inline: var(--space-3);
+
+		// The atom is `block-size: 100%`, which is `auto` under a block parent but resolves against a
+		// definite height when the card is a flex item — the body then claims the whole card and squashes
+		// the band and footer. The body is content-sized and capped below, so it never wants a percentage.
+		block-size: auto;
+
+		// `Scroll`'s default fade is black-alpha, a smudge on a dark card.
+		--scrollshadow-size: #{rem(24)};
+
+		// `Scroll` sizes its inner box to the outer one, which is content-sized here, so the cap has to go
+		// on the scrolling box itself. It counts the lead padding below plus three and a half rows, so the
+		// fold cuts a row and reads as "there is more".
+		.scroll-inner {
+			block-size: auto;
+			max-block-size: calc(var(--space-3) + #{$lumo-row-height * 3.5});
+		}
+
+		// Block padding sits inside the scroll box so that a body too short to overflow still clears the
+		// rules, while the fade stays on the scroll box's own edge.
+		.scroll-child {
+			padding-block: var(--space-3);
+
+			// A body whose renderer returned nothing must not leave a padded gap between the rules.
+			&:empty {
+				display: none;
+			}
+		}
+
+		.scroll-start-shadow {
+			background: linear-gradient(180deg, var(--lumo-surface, var(--background-norm)), transparent);
+		}
+
+		.scroll-end-shadow {
+			background: linear-gradient(0deg, var(--lumo-surface, var(--background-norm)), transparent);
+		}
+	}
+
+	&__targets {
+		> * {
+			min-inline-size: 0;
+		}
+	}
+}
+
+// Every confirm-card body row is one $lumo-row-height box, and the peek counts them. Rows are separated
+// by their own padding rather than a flex gap, which keeps the box the unit — no dividers, no per-row
+// surface: a row is only its two lines.
+.lumo-check-list__item {
+	min-block-size: $lumo-row-height;
+	min-inline-size: 0;
+	padding-block: $lumo-row-padding;
+	cursor: pointer;
+
+	// A deselected row stays legible but visibly out of the set — the missing tick alone is too quiet.
+	&--deselected {
+		opacity: 0.55;
+	}
+}
+
+// A quiet line of consequence under the sentence, where the scope is larger than the body can show.
+.lumo-note-line {
+	display: block;
+	color: var(--lumo-text-weak, var(--text-weak));
+}
+
+// The empty-state suggestion cards. The drawer is narrow, so they stack full-width in one column, each
+// re-proportioning the button atom from a centred single line into a glyph tile beside wrapping text.
+// The fill comes from the atom's own background variables rather than a `background` of our own, so the
+// hover and active states it already owns keep working.
+.button.lumo-welcome-card {
+	--button-default-background-color: var(--lumo-surface-soft, var(--background-weak));
+	--button-hover-background-color: var(--interaction-weak);
+
+	display: flex;
+
+	// The glyph tile centres on the card rather than topping out with the title: the cards are two and
+	// three lines tall, so a top-aligned tile reads as hanging off the corner of the taller ones.
+	align-items: center;
+	gap: rem(10);
+	padding: var(--space-3);
+	border-radius: var(--lumo-radius-card, var(--border-radius-lg));
+	text-align: start;
+	white-space: normal;
+
+	&__glyph {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		inline-size: rem(32);
+		block-size: rem(32);
+		border-radius: var(--border-radius-md);
+		background-color: var(--lumo-accent-tint, var(--interaction-norm-minor-2));
+		color: var(--lumo-accent, var(--interaction-norm));
+	}
+
+	// Without this the flex child refuses to shrink and a long description widens the whole card.
+	&__text {
+		min-inline-size: 0;
+	}
+
+	// Tighter than body text: the description is three lines on the longest card and reads as a block,
+	// set off the title by a hair so the two do not run together.
+	&__description {
+		margin-block-start: rem(2);
+		line-height: 1.35;
+	}
+}
+
+// Every animation must have a reduced-motion fallback that disables it.
+@media (prefers-reduced-motion: reduce) {
+	.lumo-thinking__text,
+	.lumo-loading-bar__indicator {
+		animation: none;
+	}
+}

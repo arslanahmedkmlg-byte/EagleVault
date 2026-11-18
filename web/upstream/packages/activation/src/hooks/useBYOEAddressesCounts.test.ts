@@ -1,0 +1,180 @@
+import { renderHook } from '@testing-library/react';
+import { vi } from 'vitest';
+
+import { useAddresses } from '@proton/account/addresses/hooks';
+import { useUser } from '@proton/account/user/hooks';
+import { MAX_SYNC_FREE_USER, MAX_SYNC_PAID_USER } from '@proton/byoe/src/constants';
+import {
+    ADDRESS_FLAGS,
+    ADDRESS_RECEIVE,
+    ADDRESS_SEND,
+    ADDRESS_STATUS,
+    PRODUCT_BIT,
+} from '@proton/shared/lib/constants';
+import type { Address } from '@proton/shared/lib/interfaces/Address';
+
+import { ApiSyncState } from '../api/api.interface';
+import { ImportType } from '../interface';
+import { useEasySwitchSelector } from '../logic/store';
+import type { Sync } from '../logic/sync/sync.interface';
+import useBYOEAddressesCounts from './useBYOEAddressesCounts';
+
+vi.mock('@proton/account/addresses/hooks', () => ({
+    useAddresses: vi.fn(),
+}));
+
+vi.mock('@proton/account/user/hooks', () => ({
+    useUser: vi.fn(),
+}));
+
+vi.mock('../logic/store', () => ({
+    useEasySwitchSelector: vi.fn(),
+}));
+
+vi.mock('../logic/sync/sync.selectors', () => ({
+    getAllSync: vi.fn(),
+    selectSyncListLoadingState: vi.fn(),
+}));
+
+const enabledBYOEAddress = {
+    Email: 'test@gmail.com',
+    Status: ADDRESS_STATUS.STATUS_ENABLED,
+    Receive: ADDRESS_RECEIVE.RECEIVE_YES,
+    Flags: ADDRESS_FLAGS.BYOE,
+} as Address;
+
+const disconnectedBYOEAddress = {
+    Email: 'test2@gmail.com',
+    Status: ADDRESS_STATUS.STATUS_ENABLED,
+    Receive: ADDRESS_RECEIVE.RECEIVE_YES,
+    Flags: ADDRESS_FLAGS.BYOE + ADDRESS_FLAGS.FLAG_DISABLE_E2EE + ADDRESS_FLAGS.FLAG_DISABLE_EXPECTED_SIGNED,
+} as Address;
+
+const internalAddress = {
+    Email: 'internalAddress1@proton.me',
+    Status: ADDRESS_STATUS.STATUS_ENABLED,
+    Receive: ADDRESS_RECEIVE.RECEIVE_YES,
+    Send: ADDRESS_SEND.SEND_YES,
+} as Address;
+
+const sync1 = {
+    id: 'sync1',
+    account: 'test@gmail.com',
+    importerID: 'importer1',
+    product: ImportType.MAIL,
+    state: ApiSyncState.ACTIVE,
+    startDate: 0,
+};
+
+const sync2 = {
+    id: 'sync2',
+    account: 'test3@gmail.com',
+    importerID: 'importer2',
+    product: ImportType.MAIL,
+    state: ApiSyncState.ACTIVE,
+    startDate: 0,
+};
+
+const sync3 = {
+    id: 'sync3',
+    account: 'test3@googlemail.com',
+    importerID: 'importer3',
+    product: ImportType.MAIL,
+    state: ApiSyncState.ACTIVE,
+    startDate: 0,
+};
+
+const syncCustomDomain = {
+    id: 'sync2',
+    account: 'test3@custom.com',
+    importerID: 'importer2',
+    product: ImportType.MAIL,
+    state: ApiSyncState.ACTIVE,
+    startDate: 0,
+};
+
+describe('useBYOEAddressesCounts', () => {
+    const mockUseAddresses = vi.mocked(useAddresses) as any;
+    const mockUseUser = vi.mocked(useUser) as any;
+    const mockUseEasySwitchSelector = vi.mocked(useEasySwitchSelector) as any;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('should return expected data for free user', () => {
+        const addresses: Address[] = [enabledBYOEAddress, disconnectedBYOEAddress, internalAddress];
+        const syncs: Sync[] = [sync1, sync2];
+        const user = { Subscribed: 0 };
+
+        mockUseAddresses.mockReturnValue([addresses]);
+        mockUseUser.mockReturnValue([user]);
+        mockUseEasySwitchSelector.mockReturnValue(syncs);
+
+        const { result } = renderHook(() => useBYOEAddressesCounts());
+
+        expect(result.current.byoeAddresses).toEqual([enabledBYOEAddress, disconnectedBYOEAddress]);
+        expect(result.current.activeBYOEAddresses).toEqual([enabledBYOEAddress]);
+        expect(result.current.addressesOrSyncs).toEqual(syncs);
+        expect(result.current.forwardingList).toEqual([sync2]);
+        expect(result.current.byoeAddressesAvailableCount).toBe(0);
+        expect(result.current.maxBYOEAddresses).toBe(MAX_SYNC_FREE_USER);
+    });
+
+    it('should return expected data for paid user', () => {
+        const addresses: Address[] = [enabledBYOEAddress, disconnectedBYOEAddress, internalAddress];
+        const syncs: Sync[] = [sync1, sync2];
+        const user = { Subscribed: PRODUCT_BIT.MAIL };
+
+        mockUseAddresses.mockReturnValue([addresses]);
+        mockUseUser.mockReturnValue([user]);
+        mockUseEasySwitchSelector.mockReturnValue(syncs);
+
+        const { result } = renderHook(() => useBYOEAddressesCounts());
+
+        expect(result.current.byoeAddresses).toEqual([enabledBYOEAddress, disconnectedBYOEAddress]);
+        expect(result.current.activeBYOEAddresses).toEqual([enabledBYOEAddress]);
+        expect(result.current.addressesOrSyncs).toEqual(syncs);
+        expect(result.current.forwardingList).toEqual([sync2]);
+        expect(result.current.byoeAddressesAvailableCount).toBe(2);
+        expect(result.current.maxBYOEAddresses).toBe(MAX_SYNC_PAID_USER);
+    });
+
+    it('should handle empty addresses and syncs', () => {
+        const addresses: Address[] = [];
+        const syncs: Sync[] = [];
+        const user = { Subscribed: 0 };
+
+        mockUseAddresses.mockReturnValue([addresses]);
+        mockUseUser.mockReturnValue([user]);
+        mockUseEasySwitchSelector.mockReturnValue(syncs);
+
+        const { result } = renderHook(() => useBYOEAddressesCounts());
+
+        expect(result.current.byoeAddresses).toEqual([]);
+        expect(result.current.activeBYOEAddresses).toEqual([]);
+        expect(result.current.addressesOrSyncs).toEqual([]);
+        expect(result.current.forwardingList).toEqual([]);
+        expect(result.current.byoeAddressesAvailableCount).toBe(1);
+        expect(result.current.maxBYOEAddresses).toBe(MAX_SYNC_FREE_USER);
+    });
+
+    it('should return only convertible forwardings', () => {
+        const addresses: Address[] = [enabledBYOEAddress, disconnectedBYOEAddress, internalAddress];
+        const syncs: Sync[] = [sync1, sync2, sync3, syncCustomDomain];
+        const user = { Subscribed: PRODUCT_BIT.MAIL };
+
+        mockUseAddresses.mockReturnValue([addresses]);
+        mockUseUser.mockReturnValue([user]);
+        mockUseEasySwitchSelector.mockReturnValue(syncs);
+
+        const { result } = renderHook(() => useBYOEAddressesCounts());
+
+        expect(result.current.byoeAddresses).toEqual([enabledBYOEAddress, disconnectedBYOEAddress]);
+        expect(result.current.activeBYOEAddresses).toEqual([enabledBYOEAddress]);
+        expect(result.current.addressesOrSyncs).toEqual(syncs);
+        expect(result.current.forwardingList).toEqual([sync2, sync3]);
+        expect(result.current.byoeAddressesAvailableCount).toBe(2);
+        expect(result.current.maxBYOEAddresses).toBe(MAX_SYNC_PAID_USER);
+    });
+});

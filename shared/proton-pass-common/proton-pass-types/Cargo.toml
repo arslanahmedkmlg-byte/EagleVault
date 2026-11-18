@@ -1,0 +1,29 @@
+[package]
+name = "proton-pass-types"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+doctest = false
+
+[features]
+default = []
+uniffi = ["dep:uniffi"]
+serde = []
+wasm = ["serde", "dep:tsify", "dep:wasm-bindgen"]
+
+[dependencies]
+proton-pass-derive = { path = "../proton-pass-derive" }
+
+anyhow.workspace = true
+serde.workspace = true
+tsify = { workspace = true, optional = true }
+uniffi = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+
+protobuf = "3.7"
+uuid = { version = "1.23", features = ["v4", "js"] }
+
+[build-dependencies]
+protobuf-codegen = "3.7"
+protoc-bin-vendored = "3.2.0"

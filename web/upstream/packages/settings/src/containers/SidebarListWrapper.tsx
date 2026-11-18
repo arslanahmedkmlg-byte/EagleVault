@@ -1,0 +1,65 @@
+import { useRef } from 'react';
+
+import SettingsListItem from '@proton/components/components/sidebar/SettingsListItem';
+import SidebarList from '@proton/components/components/sidebar/SidebarList';
+import SidebarListItem from '@proton/components/components/sidebar/SidebarListItem';
+import { getIsSectionAvailable, getSectionPath } from '@proton/components/containers/layout/helper';
+import type { SidebarConfig } from '@proton/components/containers/layout/interface';
+import { SettingsReferralSpotlight } from '@proton/components/containers/referral/components/SettingsReferralSpotlight';
+
+interface Props extends SidebarConfig {
+    prefix: string;
+}
+
+const SidebarListWrapper = ({ header, routes, prefix }: Props) => {
+    const referralRef = useRef<HTMLLIElement>(null);
+
+    if (!Object.values(routes).some(getIsSectionAvailable)) {
+        return null;
+    }
+
+    return (
+        <SidebarList>
+            <SidebarListItem className="navigation-link-header-group">
+                <h3>{header}</h3>
+            </SidebarListItem>
+            {Object.values(routes).map((section) => {
+                if (section.to === '/referral' && getIsSectionAvailable(section)) {
+                    return (
+                        <SettingsReferralSpotlight anchorRef={referralRef} key={section.to}>
+                            <SettingsListItem
+                                ref={referralRef}
+                                to={getSectionPath(prefix, section)}
+                                exact
+                                icon={section.icon}
+                                notification={section.notification}
+                                key={section.to}
+                            >
+                                <span className="text-ellipsis" title={section.text}>
+                                    {section.text}
+                                </span>
+                            </SettingsListItem>
+                        </SettingsReferralSpotlight>
+                    );
+                }
+                return (
+                    getIsSectionAvailable(section) && (
+                        <SettingsListItem
+                            to={getSectionPath(prefix, section)}
+                            icon={section.icon}
+                            notification={section.notification}
+                            upgradeRequired={section.upgradeRequired}
+                            key={section.to}
+                        >
+                            <span className="text-ellipsis" title={section.text}>
+                                {section.text}
+                            </span>
+                        </SettingsListItem>
+                    )
+                );
+            })}
+        </SidebarList>
+    );
+};
+
+export default SidebarListWrapper;

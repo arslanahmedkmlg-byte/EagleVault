@@ -1,0 +1,12 @@
+[package]
+name = "proton-pass-derive"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+doctest = false
+proc-macro = true
+
+[dependencies]
+quote = "1.0"
+syn = { version = "3.0", features = ["full"] }

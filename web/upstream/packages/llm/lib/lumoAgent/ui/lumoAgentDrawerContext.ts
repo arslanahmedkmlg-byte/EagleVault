@@ -1,0 +1,54 @@
+import { createContext, useContext } from 'react';
+
+import type { ToolName as ServerToolName } from '@proton/lumo-api-client/core/types';
+import type { WelcomeSuggestionCard } from '@proton/lumo-ui/shared-components/WelcomeSuggestions/WelcomeSuggestions';
+
+import type { CardRenderers, LumoAgentItem, LumoChainEnd, ServerToolMeta } from './types';
+
+/**
+ * The conversation surface exposed by `useLumoAgent`, plus the product's render config. It bridges the
+ * product-side provider (which owns the hook, mounted high so the conversation survives tab switches)
+ * to {@link DrawerLumoView} (which lives in this package and can't import the product). Declared here —
+ * the lowest layer both sides share — so the view stays product-blind.
+ */
+export interface LumoAgentDrawerValue {
+    items: LumoAgentItem[];
+    isBusy: boolean;
+    /** How the latest chain ended; `null` while one runs or once it was abandoned before reporting. */
+    lastChainEnd: LumoChainEnd | null;
+    hasConversation: boolean;
+    /** Held with the conversation, so half-typed text survives a surface unmounting its prompt. */
+    draft: string;
+    setDraft: (draft: string) => void;
+    send: (text: string) => void;
+    confirm: (params: Record<string, any>) => void;
+    cancel: () => void;
+    stop: () => void;
+    clear: () => void;
+    /** Supplied only by a host that can open a composer, and the report button appears only with it. */
+    openDebugReport?: () => void;
+    /** Supplied only by a host that has a floating panel, and the detach button appears only with it. */
+    onDetach?: () => void;
+    /** Runs before the card's prompt is sent, so the host can attribute that send to the card. */
+    onSuggestionPicked?: (cardId: string) => void;
+    cardRenderers?: CardRenderers;
+    serverToolMeta?: Partial<Record<ServerToolName, ServerToolMeta>>;
+    suggestions?: WelcomeSuggestionCard[];
+}
+
+const LumoAgentDrawerContext = createContext<LumoAgentDrawerValue | null>(null);
+
+export const useLumoAgentDrawer = (): LumoAgentDrawerValue => {
+    const value = useContext(LumoAgentDrawerContext);
+    if (!value) {
+        throw new Error('useLumoAgentDrawer must be used within a product Lumo provider (e.g. LumoMailProvider)');
+    }
+    return value;
+};
+
+/** False outside a product Lumo provider, or while that provider has not published its conversation yet. */
+export const useHasLumoAgentDrawer = (): boolean => {
+    return useContext(LumoAgentDrawerContext) !== null;
+};
+
+export default LumoAgentDrawerContext;

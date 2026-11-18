@@ -1,0 +1,249 @@
+import { type FC, type PropsWithChildren, useEffect } from 'react';
+import { Provider as ReduxProvider } from 'react-redux';
+import { useHistory } from 'react-router-dom';
+
+import { useAuthService } from 'proton-pass-web/app/Auth/AuthServiceProvider';
+import { useServiceWorker } from 'proton-pass-web/app/ServiceWorker/client/ServiceWorkerProvider';
+import type { ServiceWorkerClientMessageHandler } from 'proton-pass-web/app/ServiceWorker/client/client';
+import { B2BEvents } from 'proton-pass-web/lib/b2b';
+import { deletePassDB, getDBCache, writeDBCache } from 'proton-pass-web/lib/database';
+import { getPersistedSessions } from 'proton-pass-web/lib/sessions';
+import { settings } from 'proton-pass-web/lib/settings';
+import { spotlight } from 'proton-pass-web/lib/spotlight';
+import { sshAgent } from 'proton-pass-web/lib/ssh-agent';
+import { telemetry } from 'proton-pass-web/lib/telemetry';
+
+import { useNotifications } from '@proton/app-context/useNotifications';
+import { AppStateManager } from '@proton/pass/components/Core/AppStateManager';
+import { useOnline } from '@proton/pass/components/Core/ConnectivityProvider';
+import { usePassCore } from '@proton/pass/components/Core/PassCoreProvider';
+import { usePassExtensionLink } from '@proton/pass/components/Core/PassExtensionLink';
+import { useTypeFilterNotification } from '@proton/pass/components/Item/Filters/TypeFilterNotification';
+import { themeOptionToDesktop } from '@proton/pass/components/Layout/Theme/types';
+import {
+    decodeFilters,
+    encodeFilters,
+    getLocalPath,
+    removeLocalPath,
+    setSearchFilters,
+} from '@proton/pass/components/Navigation/routing';
+import { useReauthActionHandler } from '@proton/pass/hooks/auth/useReauthActionHandler';
+import { useNotificationEnhancer } from '@proton/pass/hooks/useNotificationEnhancer';
+import { usePassConfig } from '@proton/pass/hooks/usePassConfig';
+import { isDocumentVisible, useVisibleEffect } from '@proton/pass/hooks/useVisibleEffect';
+import { api } from '@proton/pass/lib/api/api';
+import { authStore } from '@proton/pass/lib/auth/store';
+import { clientReady } from '@proton/pass/lib/client';
+import { ACTIVE_POLLING_TIMEOUT } from '@proton/pass/lib/events/constants';
+import { applyFilterPreferences } from '@proton/pass/lib/filters/preferences';
+import { createMonitorReport } from '@proton/pass/lib/monitor/monitor.report';
+import { setVersionTag } from '@proton/pass/lib/settings/beta';
+import { createForceSyncStore, getForceSyncStorageKey } from '@proton/pass/lib/sync/force-sync';
+import { startEventPolling, stopEventPolling } from '@proton/pass/store/actions/creators/client';
+import { sagaEvents } from '@proton/pass/store/events';
+import { cacheGuard } from '@proton/pass/store/migrate';
+import { rootSagaFactory } from '@proton/pass/store/sagas';
+import { DESKTOP_SAGAS } from '@proton/pass/store/sagas/desktop';
+import { WEB_SAGAS } from '@proton/pass/store/sagas/web';
+import { selectFilters } from '@proton/pass/store/selectors/filters';
+import { selectB2BOnboardingEnabled } from '@proton/pass/store/selectors/onboarding';
+import { selectLocale } from '@proton/pass/store/selectors/settings';
+import { selectFeatureFlag, selectUserSettings } from '@proton/pass/store/selectors/user';
+import { PassFeature } from '@proton/pass/types/api/features';
+import { SpotlightMessage } from '@proton/pass/types/worker/spotlight';
+import { pipe } from '@proton/pass/utils/fp/pipe';
+import noop from '@proton/utils/noop';
+import { semver } from '@proton/utils/semver';
+
+import { resolveBroadcast } from './broadcast';
+import { sagaMiddleware, store } from './store';
+
+const SAGAS = DESKTOP_BUILD ? [...WEB_SAGAS, ...DESKTOP_SAGAS] : WEB_SAGAS;
+
+export const StoreProvider: FC<PropsWithChildren> = ({ children }) => {
+    const core = usePassCore();
+    const config = usePassConfig();
+    const authService = useAuthService();
+    const history = useHistory();
+    const { installed } = usePassExtensionLink();
+    const online = useOnline();
+    const sw = useServiceWorker();
+
+    const { createNotification } = useNotifications();
+    const enhance = useNotificationEnhancer();
+
+    const handleReauthAction = useReauthActionHandler(store);
+    const notifyTypeFilter = useTypeFilterNotification();
+
+    const showAllItemTypes = () => {
+        const searchParams = new URLSearchParams(history.location.search);
+        setSearchFilters(searchParams, { type: '*' });
+        history.replace({ ...history.location, search: searchParams.toString() });
+    };
+
+    useEffect(() => {
+        const runner = sagaMiddleware.run(
+            rootSagaFactory(SAGAS).bind(null, {
+                endpoint: 'web',
+                publish: sagaEvents.publish,
+
+                getConfig: () => config,
+                getCore: () => core.core,
+                getAppState: () => AppStateManager.getState(),
+                setAppStatus: AppStateManager.setStatus,
+                getAuthService: () => authService,
+                getAuthStore: () => authStore,
+                getCache: async () => cacheGuard(await getDBCache(authStore.getUserID()), config.APP_VERSION),
+                getPollingInterval: () => ACTIVE_POLLING_TIMEOUT,
+                getSettings: () => settings.resolve(authStore.getLocalID()),
+                getForceSyncStore: () =>
+                    createForceSyncStore({
+                        storage: localStorage,
+                        getStorageKey: () => getForceSyncStorageKey(authStore.getLocalID()),
+                    }),
+                getTelemetry: () => telemetry,
+                getDesktopBridge: DESKTOP_BUILD ? () => window.ctxBridge! : undefined,
+
+                onBeforeHydrate: (state, fromCache) => {
+                    if (!fromCache && getPersistedSessions().length > 1) {
+                        /* If the user switched to a new account for the first time, initialize
+                         * their settings theme to be the current theme which should have been
+                         * set to the last used account's theme (see `getTheme`). This
+                         * avoids prompting for theme onboarding on account switch. `fromCache`
+                         * will always be false on first app boot. */
+                        state.settings.theme = core.theme.getState();
+                    }
+
+                    return state;
+                },
+
+                onBoot: async (res) => {
+                    const userID = authStore.getUserID();
+                    const state = store.getState();
+
+                    if (res.ok) {
+                        /** Wait for i18n/spotlight init to avoid re-render
+                         * if i18n locale has to change on boot */
+                        await spotlight.init().catch(noop);
+                        await core.i18n
+                            .setLocale(selectLocale(state), selectUserSettings(state)?.DateFormatOptions)
+                            .catch(noop);
+
+                        telemetry.start().catch(noop);
+                        B2BEvents.start().catch(noop);
+
+                        if (res.version && semver(res.version) < semver(DESKTOP_BUILD ? '1.24.2' : '1.31.5')) {
+                            /** Auto-acknowledge the `WELCOME` message to prevent showing the
+                             * spotlight modal to existing users after they update */
+                            spotlight.acknowledge(SpotlightMessage.WELCOME);
+                        }
+
+                        AppStateManager.setBooted(true);
+
+                        if (isDocumentVisible() && !res.offline) store.dispatch(startEventPolling());
+
+                        const emptyPath = !removeLocalPath(history.location.pathname);
+
+                        const searchParams = new URLSearchParams(history.location.search);
+                        const searchFilters = searchParams.get('filters');
+                        const currentFilters = decodeFilters(searchFilters);
+
+                        /* URL filters (deep link or reload) win over the cached preferences */
+                        const bootFilters =
+                            searchFilters === null
+                                ? applyFilterPreferences(currentFilters, selectFilters(state))
+                                : currentFilters;
+
+                        searchParams.set('filters', encodeFilters(bootFilters));
+                        const search = searchParams.toString();
+
+                        if (emptyPath) {
+                            const b2bOnboardingEnabled = selectB2BOnboardingEnabled(installed)(state);
+                            const b2bOnboard = await core.spotlight.check(SpotlightMessage.B2B_ONBOARDING);
+                            const b2bRedirect = b2bOnboardingEnabled && b2bOnboard;
+
+                            if (b2bRedirect) return history.replace({ pathname: getLocalPath('onboarding'), search });
+                        }
+
+                        history.replace({ ...history.location, search });
+                        if (searchFilters === null) notifyTypeFilter(bootFilters.type, showAllItemTypes);
+
+                        if (res.reauth) void handleReauthAction(res.reauth);
+                    } else {
+                        AppStateManager.setBooted(false);
+                        if (res.clearCache) void deletePassDB(userID);
+                    }
+                },
+
+                onLocaleUpdated: core.i18n.setLocale,
+
+                onBetaUpdated: async (beta) => {
+                    if (BUILD_TARGET === 'web') {
+                        const state = store.getState();
+                        const forceAlpha = selectFeatureFlag(PassFeature.PassWebInternalAlpha)(state);
+                        await api.idle();
+
+                        setVersionTag(beta, forceAlpha);
+                        window.location.reload();
+                    }
+                },
+
+                onNotification: pipe(enhance, createNotification),
+
+                onItemsUpdated: async (options) => {
+                    if (options?.report ?? true) {
+                        void createMonitorReport({
+                            state: store.getState(),
+                            monitor: core.monitor,
+                            dispatch: core.onB2BEvent,
+                        });
+                    }
+
+                    await sshAgent?.sync();
+                },
+                onSettingsUpdated: async (update) => {
+                    await settings.sync(update, authStore.getLocalID());
+                    if (update.theme) core.theme.setState(update.theme);
+
+                    if (DESKTOP_BUILD) {
+                        /** Electron might need to apply or store certain settings, forward them */
+                        const desktopBridge = window.ctxBridge;
+                        const { theme } = update;
+                        if (theme) desktopBridge?.setTheme(themeOptionToDesktop[theme]).catch(noop);
+                    }
+                },
+
+                setCache: async (encryptedCache) => {
+                    const userID = authStore.getUserID();
+                    if (userID) return writeDBCache(userID, encryptedCache, config.APP_VERSION).catch(noop);
+                },
+            })
+        );
+
+        const handleAction: ServiceWorkerClientMessageHandler<'action'> = ({ action, localID }) => {
+            if (!authStore.hasSession(localID)) return;
+            const resolved = resolveBroadcast(AppStateManager.getState().status, action);
+            if (resolved) store.dispatch(resolved);
+        };
+
+        sw?.on('action', handleAction);
+
+        /** When hot-reloading: this `useEffect` can re-trigger,
+         * so cancel the on-going saga runner. */
+        return () => {
+            runner.cancel();
+            sw?.off('action', handleAction);
+        };
+    }, []);
+
+    useVisibleEffect(
+        (visible: boolean) => {
+            const { status } = AppStateManager.getState();
+            if (visible && online && clientReady(status)) store.dispatch(startEventPolling());
+            else if (!visible || !online) store.dispatch(stopEventPolling());
+        },
+        [online]
+    );
+
+    return <ReduxProvider store={store}>{children}</ReduxProvider>;
+};

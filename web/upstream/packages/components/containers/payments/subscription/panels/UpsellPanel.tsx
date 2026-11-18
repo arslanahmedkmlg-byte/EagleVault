@@ -1,0 +1,156 @@
+import type { ReactNode } from 'react';
+import { useState } from 'react';
+
+import { c } from 'ttag';
+
+import { Button } from '@proton/atoms/Button/Button';
+import { InlineLinkButton } from '@proton/atoms/InlineLinkButton/InlineLinkButton';
+import { IcCheckmark } from '@proton/icons/icons/IcCheckmark';
+import { IcChevronDown } from '@proton/icons/icons/IcChevronDown';
+import { IcChevronUp } from '@proton/icons/icons/IcChevronUp';
+import { IcStar } from '@proton/icons/icons/IcStar';
+import { CYCLE, type PLANS } from '@proton/payments/core/constants';
+import { isElectronApp } from '@proton/shared/lib/helpers/desktop';
+import clsx from '@proton/utils/clsx';
+
+import StripedItem from '../../../../components/stripedList/StripedItem';
+import { StripedList } from '../../../../components/stripedList/StripedList';
+import useActiveBreakpoint from '../../../../hooks/useActiveBreakpoint';
+import { upgradeButtonClick } from '../../../desktop/openExternalLink';
+import { useHasInboxDesktopInAppPayments } from '../../../desktop/useHasInboxDesktopInAppPayments';
+import type { UpsellFeature } from '../../features/interface';
+import { PlanCardFeaturesIntro } from '../PlanCardFeatures';
+import type { ButtonColor, ButtonShape, UpsellCta } from '../helpers/dashboard-upsells';
+import Panel from './Panel';
+
+import './UpsellPanel.scss';
+
+export interface UpsellPanelProps {
+    title: string;
+    plan?: PLANS;
+    children?: ReactNode;
+    featuresIntro?: string;
+    features: UpsellFeature[];
+    isRecommended?: boolean;
+    ctas?: UpsellCta[];
+}
+
+type GetButtonColorAndShape = (opt: Pick<UpsellCta, 'color' | 'shape'> & Pick<UpsellPanelProps, 'isRecommended'>) => {
+    shape?: ButtonShape;
+    color?: ButtonColor;
+};
+const getButtonColorAndShape: GetButtonColorAndShape = ({ color, shape, isRecommended }) => {
+    // If button has another shape, then with don't want to compell a color on `recommended` state
+    if (!isRecommended || (shape && !['solid', 'outline'].includes(shape))) {
+        return { color, shape };
+    }
+
+    return { color: 'norm', shape: 'solid' };
+};
+
+const UpsellPanel = ({
+    title,
+    plan,
+    featuresIntro,
+    features,
+    children,
+    ctas = [],
+    isRecommended,
+}: UpsellPanelProps) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+    const toggleExpand = () => setIsExpanded((prev) => !prev);
+    const { viewportWidth } = useActiveBreakpoint();
+    const hasInboxDesktopInAppPayments = useHasInboxDesktopInAppPayments();
+
+    return (
+        <Panel
+            className={clsx(isRecommended ? 'border-primary border-recommended' : 'border-strong', 'UpsellPanel')}
+            title={title}
+        >
+            {/* `Recommended` label */}
+            {isRecommended && (
+                <label className="recommended-label absolute color-invert bg-primary rounded-full px-2 py-1 flex items-center">
+                    <IcStar className="mr-1" />
+                    {c('upsell panel').t`Recommended`}
+                </label>
+            )}
+            {children}
+            {viewportWidth['<=small'] && (
+                <div className="w-full text-center my-6 flex">
+                    <InlineLinkButton className="mx-auto" onClick={() => toggleExpand()}>
+                        {isExpanded ? (
+                            <>
+                                <span>{c('Action').t`Hide plan features`}</span>
+                                <IcChevronUp className="ml-2" />
+                            </>
+                        ) : (
+                            <>
+                                <span>{c('Action').t`See plan features`}</span>
+                                <IcChevronDown className="ml-2" />
+                            </>
+                        )}
+                    </InlineLinkButton>
+                </div>
+            )}
+            {(!viewportWidth['<=small'] || isExpanded) && featuresIntro && (
+                <PlanCardFeaturesIntro text={featuresIntro} className="mt-4" rowClassName="px-3" iconClassName="mr-2" />
+            )}
+            {(!viewportWidth['<=small'] || isExpanded) && (
+                <StripedList alternate="odd">
+                    {features.map(
+                        ({
+                            id,
+                            icon: FeatureIcon = IcCheckmark,
+                            text,
+                            tooltip,
+                            included = true,
+                            status = 'available',
+                        }) => {
+                            if (!included) {
+                                return null;
+                            }
+
+                            return (
+                                <StripedItem
+                                    key={id}
+                                    className={clsx(status === 'coming-soon' && 'color-weak')}
+                                    left={<FeatureIcon className={clsx(included && 'color-success')} size={5} />}
+                                    tooltip={tooltip}
+                                >
+                                    {text}
+                                </StripedItem>
+                            );
+                        }
+                    )}
+                </StripedList>
+            )}
+            <div className="flex column gap-4">
+                {ctas.map((cta) => {
+                    const handleOnClick = () => {
+                        // Open the link in browser on Electron unless it is supported
+                        if (isElectronApp && !hasInboxDesktopInAppPayments) {
+                            upgradeButtonClick(CYCLE.YEARLY, plan);
+                        } else {
+                            cta.action();
+                        }
+                    };
+
+                    return (
+                        <Button
+                            key={`upsell-action-${cta.label}`}
+                            data-testid="upsell-cta"
+                            size="large"
+                            {...getButtonColorAndShape({ shape: cta.shape, color: cta.color, isRecommended })}
+                            onClick={handleOnClick}
+                            fullWidth
+                        >
+                            {cta.label}
+                        </Button>
+                    );
+                })}
+            </div>
+        </Panel>
+    );
+};
+
+export default UpsellPanel;

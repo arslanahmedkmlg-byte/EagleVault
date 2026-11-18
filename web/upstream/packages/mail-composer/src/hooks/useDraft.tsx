@@ -1,0 +1,130 @@
+import { useCallback, useEffect } from 'react';
+
+import { useAddresses, useGetAddresses } from '@proton/account/addresses/hooks';
+import { useGetUser } from '@proton/account/user/hooks';
+import { useUserSettings } from '@proton/account/userSettings/hooks';
+import { useCache } from '@proton/app-context/useCache';
+import { useSilentApi } from '@proton/app-context/useSilentApi';
+import { useModalTwo } from '@proton/components/components/modalTwo/useModalTwo';
+import { MESSAGE_ACTIONS } from '@proton/mail-message/constants';
+import { cloneDraft, createNewDraft } from '@proton/mail-message/helpers/message/messageDraft';
+import { findSender } from '@proton/mail-message/helpers/message/messageRecipients';
+import { useGetAttachment } from '@proton/mail-message/hooks/attachments/useAttachment';
+import { createDraft as createDraftAction } from '@proton/mail-message/store/messages/draft/messagesDraftActions';
+import type {
+    MessageState,
+    MessageStateWithData,
+    PartialMessageState,
+} from '@proton/mail-message/store/messages/messagesTypes';
+import { baseUseDispatch } from '@proton/react-redux-store/ProtonStoreContext';
+import { TelemetryMailBlockquotes, TelemetryMeasurementGroups } from '@proton/shared/lib/api/telemetry';
+import { sendTelemetryReport } from '@proton/shared/lib/helpers/metrics';
+import { isPaid } from '@proton/shared/lib/user/helpers';
+import generateUID from '@proton/utils/generateUID';
+
+import SendingFromDefaultAddressModal from '../components/composer/modals/SendingFromDefaultAddressModal';
+import { useComposerMessageHost } from '../host/composerMessageHost';
+import { useEditorVersion } from './useEditorVersion';
+
+const CACHE_KEY = 'Draft';
+
+const useDraftVerifications = () => {
+    const getAddresses = useGetAddresses();
+    const getUser = useGetUser();
+    const [sendingFromDefaultAddressModal, handleShowModal] = useModalTwo(SendingFromDefaultAddressModal);
+
+    const handleDraftVerifications = useCallback(
+        async (action: MESSAGE_ACTIONS, referenceMessage?: PartialMessageState) => {
+            const [user, addresses] = await Promise.all([getUser(), getAddresses()]);
+
+            if (!isPaid(user) && findSender(addresses, referenceMessage?.data)?.Email.endsWith('@pm.me')) {
+                const email = findSender(addresses, referenceMessage?.data, true)?.Email;
+                if (email) {
+                    await handleShowModal({ email });
+                }
+            }
+        },
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- autofix-eslint-AB16AB
+        [getUser, getAddresses]
+    );
+
+    return { handleDraftVerifications, sendingFromDefaultAddressModal };
+};
+
+/**
+ * Hooks to create new draft messages.
+ * It will prepare an empty draft to be quickly reused and create other drafts with helpers
+ */
+export const useDraft = () => {
+    const silentApi = useSilentApi();
+    const cache = useCache();
+    const { useGetMailSettings, useMailSettings } = useComposerMessageHost();
+    const getMailSettings = useGetMailSettings();
+    const getAddresses = useGetAddresses();
+    const dispatch = baseUseDispatch();
+    const { handleDraftVerifications: draftVerifications, sendingFromDefaultAddressModal } = useDraftVerifications();
+    const [addresses] = useAddresses();
+    const [mailSettings] = useMailSettings();
+    const [userSettings] = useUserSettings();
+    const getAttachment = useGetAttachment();
+    const editorVersion = useEditorVersion();
+
+    useEffect(() => {
+        const run = async () => {
+            if (!mailSettings || !addresses) {
+                return;
+            }
+            const message = createNewDraft({
+                action: MESSAGE_ACTIONS.NEW,
+                referenceMessage: undefined,
+                mailSettings,
+                userSettings,
+                addresses,
+                getAttachment,
+            });
+            cache.set(CACHE_KEY, message);
+        };
+        void run();
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- autofix-eslint-C7DF9A
+    }, [cache, addresses, mailSettings]);
+
+    const createDraft = useCallback(
+        async (action: MESSAGE_ACTIONS, referenceMessage?: PartialMessageState) => {
+            const [mailSettings, addresses] = await Promise.all([getMailSettings(), getAddresses()]);
+
+            await draftVerifications(action, referenceMessage);
+
+            let message: MessageState;
+            if (action === MESSAGE_ACTIONS.NEW && cache.has(CACHE_KEY) && referenceMessage === undefined) {
+                message = cloneDraft(cache.get(CACHE_KEY) as MessageStateWithData);
+            } else {
+                if ([MESSAGE_ACTIONS.REPLY, MESSAGE_ACTIONS.REPLY_ALL, MESSAGE_ACTIONS.FORWARD].includes(action)) {
+                    void sendTelemetryReport({
+                        api: silentApi,
+                        measurementGroup: TelemetryMeasurementGroups.mailExpandBlockquotes,
+                        event: TelemetryMailBlockquotes.createReply,
+                        dimensions: { editorVersion },
+                        delay: false,
+                    });
+                }
+                // This cast is quite dangerous but hard to remove
+                message = createNewDraft({
+                    action,
+                    referenceMessage,
+                    mailSettings,
+                    userSettings,
+                    addresses,
+                    getAttachment,
+                }) as MessageState;
+            }
+
+            message.localID = generateUID('draft');
+            dispatch(createDraftAction(message));
+            return message.localID;
+        },
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- autofix-eslint-217C17
+        [cache, getMailSettings, getAddresses, draftVerifications, editorVersion]
+    );
+
+    return { createDraft, sendingFromDefaultAddressModal };
+};

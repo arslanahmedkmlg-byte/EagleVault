@@ -1,0 +1,81 @@
+import type { DriveCompat } from '@proton/drive-store/lib/useDriveCompat'
+import type { NodeMeta } from '@proton/docs-shared/BasicTypes'
+import type { DecryptedNode } from '@proton/docs-shared/DecryptedNode'
+import { Result } from '@proton/docs-shared/Result'
+import type { FileToDocConversionResult } from '../Types/FileToDocConversionResult'
+import type { GetDocumentMeta } from './GetDocumentMeta'
+import { getErrorString } from '../Util/GetErrorString'
+import type { UseCaseInterface } from '../Domain/UseCase/UseCaseInterface'
+import { getDocsConversionType, isConvertibleToProtonDocsSpreadsheet } from '@proton/shared/lib/helpers/mimetype'
+import { getNodeNameWithoutExtension } from '../Util/getNodeNameWithoutExtension'
+import { getMyFilesNodeMeta } from '../DriveSDK/getMyFilesNodeMeta'
+import { findAvailableNodeName } from '../DriveSDK/findAvailableNodeName'
+import type { UnleashClient } from '@proton/unleash/UnleashClient'
+import { isDriveCompatSDKEnabled } from '../Util/isDriveCompatSDKEnabled'
+import type { CreateDocumentNode } from '../Crypto/useCreateDocumentNode'
+
+/**
+ * Creates a new empty document shell file. This file will then be opened, and the contents will be converted by the editor.
+ */
+export class CreateEmptyDocumentForConversion implements UseCaseInterface<FileToDocConversionResult> {
+  constructor(
+    private driveCompat: DriveCompat,
+    private getDocumentMeta: GetDocumentMeta,
+    private unleashClient: UnleashClient,
+    private providedCreateDocumentNode?: CreateDocumentNode,
+  ) {}
+
+  async execute({
+    node,
+    contents,
+  }: {
+    node: DecryptedNode
+    contents: Uint8Array<ArrayBuffer>
+  }): Promise<Result<FileToDocConversionResult>> {
+    try {
+      const replaceDriveCompat = isDriveCompatSDKEnabled(this.unleashClient)
+      const getRoot = replaceDriveCompat ? getMyFilesNodeMeta : () => this.driveCompat.getMyFilesNodeMeta()
+      const parentMeta: NodeMeta = node.parentNodeId
+        ? {
+            volumeId: node.volumeId,
+            linkId: node.parentNodeId,
+          }
+        : await getRoot()
+
+      const nodeNameWithoutExtension = getNodeNameWithoutExtension(node)
+      const newDocName = replaceDriveCompat
+        ? await findAvailableNodeName(parentMeta, nodeNameWithoutExtension)
+        : await this.driveCompat.findAvailableNodeName(parentMeta, nodeNameWithoutExtension)
+
+      const mimeType = node.mimeType
+      const documentType = isConvertibleToProtonDocsSpreadsheet(mimeType) ? 'sheet' : 'doc'
+
+      const createDocumentNode = this.providedCreateDocumentNode ?? this.driveCompat.createDocumentNode
+      const shellResult = await createDocumentNode(parentMeta, newDocName, documentType)
+
+      const documentMetaResult = await this.getDocumentMeta.execute({
+        volumeId: shellResult.volumeId,
+        linkId: shellResult.linkId,
+      })
+
+      if (documentMetaResult.isFailed()) {
+        return Result.fail(documentMetaResult.getErrorObject().message)
+      }
+
+      const newDocMeta = documentMetaResult.getValue()
+
+      const conversionType = getDocsConversionType(mimeType)
+
+      return Result.ok({
+        newDocMeta,
+        newShell: shellResult,
+        dataToConvert: {
+          data: contents,
+          type: { docType: documentType, dataType: conversionType },
+        },
+      })
+    } catch (error) {
+      return Result.fail(getErrorString(error) ?? 'Failed to create empty document for conversion')
+    }
+  }
+}

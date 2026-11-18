@@ -1,0 +1,25 @@
+use proton_pass_common::wifi::WifiSecurity;
+use serde::{Deserialize, Serialize};
+use tsify::Tsify;
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Tsify, Deserialize, Serialize)]
+pub enum WasmWifiSecurity {
+    Unspecified,
+    WPA,
+    WPA2,
+    WPA3,
+    WEP,
+}
+
+impl From<WasmWifiSecurity> for WifiSecurity {
+    fn from(val: WasmWifiSecurity) -> Self {
+        match val {
+            WasmWifiSecurity::Unspecified => WifiSecurity::Unspecified,
+            WasmWifiSecurity::WPA => WifiSecurity::WPA,
+            WasmWifiSecurity::WPA2 => WifiSecurity::WPA2,
+            WasmWifiSecurity::WPA3 => WifiSecurity::WPA3,
+            WasmWifiSecurity::WEP => WifiSecurity::WEP,
+        }
+    }
+}

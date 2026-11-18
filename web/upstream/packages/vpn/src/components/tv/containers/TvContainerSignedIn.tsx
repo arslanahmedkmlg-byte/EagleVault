@@ -1,0 +1,95 @@
+import { useState } from 'react';
+
+import { useEntitlementChecksForOrgAndUser } from '@proton/account/entitlementCatalog/hooks';
+import { useOrganization } from '@proton/account/organization/hooks';
+import { useUser } from '@proton/account/user/hooks';
+import { useApi } from '@proton/app-context/useApi';
+import Loader from '@proton/components/components/loader/Loader';
+import { getTelemetryUserTier } from '@proton/components/helpers/getTelemetryUserTier';
+import type { TelemetryUserTier } from '@proton/components/helpers/getTelemetryUserTier';
+import useEffectOnce from '@proton/hooks/useEffectOnce';
+import { getApiError } from '@proton/shared/lib/api/helpers/apiErrorHelper';
+import { TelemetryMeasurementGroups, TelemetryVpnTvEvents } from '@proton/shared/lib/api/telemetry';
+import { sendTelemetryReport } from '@proton/shared/lib/helpers/metrics';
+import { getItem, removeItem } from '@proton/shared/lib/helpers/storage';
+
+import { VPN_TV_USER_TIER } from '../../../../constants/tvUserTier';
+import { isB2BAdmin } from '../../../functions/isB2BAdmin';
+import { TvConfirmForkSession } from '../components/TvConfirmForkSession';
+import { TvSignInCompleted } from '../components/TvSignInCompleted';
+import { TvSignInFailed } from '../components/TvSignInFailed';
+import type { FetchErrors } from '../types';
+import { forkSession } from '../utils/forkSession';
+import { getChildClientId } from '../utils/getChildClientId';
+
+enum ForkSessionStep {
+    CONFIRMATION = 0,
+    FETCHING_CODE = 1,
+    DEVICE_CONNECTED = 2,
+    DEVICE_CONNECTION_ERROR = 3,
+}
+
+const childClientId = getChildClientId();
+
+export const TvContainerSignedIn = ({ code }: { code: string }) => {
+    const api = useApi();
+    const [step, setStep] = useState<ForkSessionStep>(ForkSessionStep.CONFIRMATION);
+    const [error, setError] = useState<FetchErrors | undefined>(undefined);
+    const [user] = useUser();
+    const [organization] = useOrganization();
+    const [entitlements] = useEntitlementChecksForOrgAndUser();
+    const [tier, setTier] = useState(getTelemetryUserTier(user));
+
+    const isBusiness = isB2BAdmin({ user, organization, isVpnB2B: entitlements.isVpnB2B });
+
+    useEffectOnce(() => {
+        // If the tier is in the localStorage means it was sent already, but it is also need to
+        // be sent in the payload when forking the session.
+        const localStorageTier: TelemetryUserTier | undefined = getItem(VPN_TV_USER_TIER);
+        if (localStorageTier) {
+            setTier(localStorageTier);
+            removeItem(VPN_TV_USER_TIER);
+            return;
+        }
+
+        void sendTelemetryReport({
+            api,
+            delay: false,
+            event: TelemetryVpnTvEvents.tvAuthInitiated,
+            dimensions: { userTierAtInitiation: tier, flowType: 'web' },
+            measurementGroup: TelemetryMeasurementGroups.vpnTv,
+        });
+    });
+
+    const onConfirm = () => {
+        setStep(ForkSessionStep.FETCHING_CODE);
+        if (isBusiness) {
+            setStep(ForkSessionStep.DEVICE_CONNECTION_ERROR);
+            setError('business-user');
+            return;
+        }
+        if (code) {
+            forkSession({
+                api,
+                childClientId,
+                code,
+                payload: JSON.stringify({ InitialUserTier: tier, FlowType: 'web' }),
+            })
+                .then(() => setStep(ForkSessionStep.DEVICE_CONNECTED))
+                .catch((error) => {
+                    const { code } = getApiError(error);
+                    setError(code === 2501 ? 'code-expired' : 'generic');
+                    setStep(ForkSessionStep.DEVICE_CONNECTION_ERROR);
+                });
+        }
+    };
+
+    return (
+        <>
+            {step === ForkSessionStep.CONFIRMATION && <TvConfirmForkSession onConfirm={onConfirm} />}
+            {step === ForkSessionStep.FETCHING_CODE && <Loader />}
+            {step === ForkSessionStep.DEVICE_CONNECTED && <TvSignInCompleted />}
+            {step === ForkSessionStep.DEVICE_CONNECTION_ERROR && error && <TvSignInFailed error={error} />}
+        </>
+    );
+};

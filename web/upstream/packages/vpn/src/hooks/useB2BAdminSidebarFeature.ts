@@ -1,0 +1,111 @@
+import { useAddresses } from '@proton/account/addresses/hooks';
+import { useAllSubscriptions } from '@proton/account/allSubscriptions/hooks';
+import { useEntitlementChecksForOrgAndUser } from '@proton/account/entitlementCatalog/hooks';
+import { useOrganization } from '@proton/account/organization/hooks';
+import { useIsDataRecoveryAvailable } from '@proton/account/recovery/dataRecovery';
+import { useIsSessionRecoveryAvailable } from '@proton/account/recovery/sessionRecoveryHooks';
+import { useSubscription } from '@proton/account/subscription/hooks';
+import { useUser } from '@proton/account/user/hooks';
+import { useUserPermissions } from '@proton/account/userPermissions/hooks';
+import { useConfig } from '@proton/app-context/useConfig';
+import type { SidebarTree } from '@proton/components/components/sidebar/nav/interface';
+import useRecoveryNotification from '@proton/components/hooks/useRecoveryNotification';
+import useEffectOnce from '@proton/hooks/useEffectOnce';
+import { applyPrefix } from '@proton/nav/api/applyPrefix';
+import { defineSearchOptions } from '@proton/nav/api/defineSearchOptions';
+import { defineSidebar } from '@proton/nav/api/defineSidebar';
+import type { NavResolved } from '@proton/nav/types/nav';
+import { hasNoOrgPermissions } from '@proton/shared/lib/helpers/orgPermissions';
+import { removeItem } from '@proton/shared/lib/helpers/storage';
+import { useFlag } from '@proton/unleash/useFlag';
+
+import { constants } from '../../constants';
+import { resolveNavigation } from '../definitions/routes';
+
+type Args = {
+    prefix?: string;
+};
+
+export const useB2BAdminSidebarFeature = ({
+    prefix,
+}: Args):
+    | {
+          enabled: true;
+          nav: NavResolved;
+          routes: SidebarTree;
+          settings: ReturnType<typeof defineSearchOptions>;
+          loading: false;
+      }
+    | { enabled: false; routes: undefined; loading: boolean } => {
+    const [user, isUserLoading] = useUser();
+    const [addresses] = useAddresses();
+    const [subscription, isSubscriptionLoading] = useSubscription();
+    const [allSubscriptions, isAllSubscriptionsLoading] = useAllSubscriptions();
+    const [organization, isOrganizationLoading] = useOrganization();
+    const [entitlements, isEntitlementsLoading] = useEntitlementChecksForOrgAndUser();
+
+    const [{ permissions }] = useUserPermissions();
+
+    const skip =
+        isUserLoading ||
+        isSubscriptionLoading ||
+        isAllSubscriptionsLoading ||
+        isOrganizationLoading ||
+        isEntitlementsLoading ||
+        permissions === null;
+    const isEnabled = useFlag('B2BSidebarRefreshEnabled');
+    const { APP_NAME } = useConfig();
+    const recoveryNotification = useRecoveryNotification(false, false);
+    const [{ isDataRecoveryAvailable }] = useIsDataRecoveryAvailable();
+    const [isSessionRecoveryAvailable] = useIsSessionRecoveryAvailable();
+
+    const SsoForPbs = useFlag('SsoForPbs');
+
+    const ZoomIntegrationDisabled = useFlag('ZoomIntegrationDisabled');
+    const NewScheduleOption = useFlag('NewScheduleOption');
+    const B2BAlwaysOnEnabled = useFlag('B2BAlwaysOnEnabled');
+    const ShowSignInRestrictionToggle = useFlag('ShowSignInRestrictionToggle');
+
+    useEffectOnce(() => {
+        removeItem(constants.AdminSidebarStorageKey);
+        removeItem(constants.AdminSidebarFeedbackKey);
+        removeItem(constants.AdminSidebarSpotlightKey);
+    }, []);
+
+    const disabled = (loading: boolean) => ({ enabled: false as const, routes: undefined, loading });
+
+    if (skip || !subscription || !allSubscriptions || !organization || !permissions) {
+        return disabled(true);
+    }
+    const hasVpnOrganization = entitlements.isVpnB2B;
+    if (!isEnabled || !hasVpnOrganization || hasNoOrgPermissions(permissions)) {
+        return disabled(false);
+    }
+
+    const resolvedNavigation = resolveNavigation({
+        user,
+        subscription,
+        allSubscriptions,
+        entitlements,
+        organization,
+        notifications: { recovery: recoveryNotification?.color },
+        flags: {
+            SsoForPbs,
+            ZoomIntegrationDisabled,
+            NewScheduleOption,
+            B2BAlwaysOnEnabled,
+            ShowSignInRestrictionToggle,
+        },
+        context: { isDataRecoveryAvailable, isSessionRecoveryAvailable, appName: APP_NAME, addresses },
+        permissions,
+    });
+
+    const prefixedNavigation = prefix ? applyPrefix(resolvedNavigation, prefix) : resolvedNavigation;
+    return {
+        enabled: true,
+        loading: false,
+        nav: prefixedNavigation,
+        routes: defineSidebar(prefixedNavigation),
+        settings: defineSearchOptions(prefixedNavigation),
+    };
+};

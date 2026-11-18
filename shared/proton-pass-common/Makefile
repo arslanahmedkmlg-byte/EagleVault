@@ -1,0 +1,580 @@
+SHELL:=/bin/bash
+MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
+PROJECT_ROOT := $(dir $(MAKEFILE_PATH))
+
+# Pass
+MOBILE_LIB_NAME:=libproton_pass_common_mobile.so
+ANDROID_BINDINGS_DIR:=${PROJECT_ROOT}proton-pass-mobile/android/lib/src/main/java/proton/android/pass/commonrust
+ANDROID_JNI_DIR:=${PROJECT_ROOT}proton-pass-mobile/android/lib/src/main/jniLibs
+IOS_HEADER_DIR:=${PROJECT_ROOT}proton-pass-mobile/iOS/headers
+IOS_FRAMEWORK_DIR:=${PROJECT_ROOT}proton-pass-mobile/iOS/frameworks
+IOS_LIB_DIR:=${PROJECT_ROOT}proton-pass-mobile/iOS/libs
+IOS_LIB_NAME:=libproton_pass_common_mobile.a
+IOS_PACKAGE_DIR:=${PROJECT_ROOT}proton-pass-mobile/iOS/PassRustCore
+IOS_XCFRAMEWORK_NAME:=RustFramework.xcframework
+WEB_DIR:=${PROJECT_ROOT}proton-pass-web
+WEB_BUILD_DIR:=${WEB_DIR}/dist
+WEB_TEST_DIR:=${WEB_DIR}/test
+WEB_TEST_BUILD_DIR:=${WEB_DIR}/test/pkg
+# Web-only profile overrides, for smaller wasm output
+WEB_CARGO_ENV:=CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S), Darwin)
+LIBRARY_EXT = dylib
+BINDINGS_LIB_EXT = dylib
+JNA_OS = darwin
+else ifeq ($(UNAME_S), Linux)
+LIBRARY_EXT = so
+BINDINGS_LIB_EXT = a
+JNA_OS = linux
+endif
+
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M), arm64)
+JNA_ARCH = aarch64
+else ifeq ($(UNAME_M), aarch64)
+JNA_ARCH = aarch64
+else ifeq ($(UNAME_M), x86_64)
+JNA_ARCH = x86-64
+else
+JNA_ARCH = $(UNAME_M)
+endif
+
+JNA_PLATFORM = $(JNA_OS)-$(JNA_ARCH)
+
+.PHONY: default
+default: help
+
+# --- Project management
+.PHONY: fmt
+fmt: ## Format the project
+	@cargo fmt --all
+
+.PHONY: lint
+lint: ## Lint the project
+	@cargo clippy --all --all-targets
+
+.PHONY: test
+test: ## Run the library tests
+	@command_exists() { command -v cargo-nextest >/dev/null 2>&1; }; if command_exists cargo-nextest; then cargo nextest run; else cargo test; fi
+
+.PHONY: test-release
+test-release: ## Run the library tests in release mode
+	@command_exists() { command -v cargo-nextest >/dev/null 2>&1; }; if command_exists cargo-nextest; then cargo nextest run --release; else cargo test --release; fi
+
+.PHONY: bench
+bench: ## Run the benchmarks
+	@cargo bench -p proton-pass-common
+
+.PHONY: totp-bench
+totp-bench: ## Run the TOTP benchmarks
+	@cargo bench -p proton-pass-totp
+
+.PHONY: clean
+clean: ## Remove compile artifacts
+	@cargo clean
+	@rm -rf proton-pass-mobile/src/uniffi
+	@rm -rf proton-pass-mobile/src/*.swift
+	@rm -rf proton-pass-mobile/src/*.h
+	@rm -rf proton-pass-mobile/src/*.modulemap
+	@rm -rf proton-pass-mobile/android/lib/build
+	@rm -rf proton-pass-mobile/android/libTest/build
+	@rm -rf proton-pass-mobile/android/lib/src/main/jniLibs
+	@rm -rf proton-pass-mobile/android/build
+	@rm -rf proton-pass-mobile/src/proton/android/pass/commonrust/proton_pass_common_mobile.kt
+	@rm -rf proton-pass-mobile/iOS/frameworks
+	@rm -rf proton-pass-mobile/iOS/headers
+	@rm -rf proton-pass-mobile/iOS/PassRustCore/Sources/PassRustCore/PassRustCore.swift
+	@rm -rf proton-pass-mobile/iOS/PassRustCore/*.xcframework
+	@rm -rf proton-pass-mobile/iOS/PassRustCore/.build
+	@rm -rf ${WEB_BUILD_DIR}
+	@rm -rf ${WEB_TEST_BUILD_DIR}
+	@rm -rf proton-pass-web/pkg
+	@rm -rf proton-authenticator-web/pkg
+	@rm -rf proton-authenticator-mobile/src/uniffi
+	@rm -rf proton-authenticator-mobile/src/*.swift
+	@rm -rf proton-authenticator-mobile/src/*.h
+	@rm -rf proton-authenticator-mobile/src/*.modulemap
+	@rm -rf proton-authenticator-mobile/android/lib/build
+	@rm -rf proton-authenticator-mobile/android/lib/src/main/jniLibs
+	@rm -rf proton-authenticator-mobile/src/proton/android/authenticator/commonrust/proton_authenticator_common_mobile.kt
+	@rm -rf proton-authenticator-mobile/iOS/frameworks
+	@rm -rf proton-authenticator-mobile/iOS/headers
+	@rm -rf proton-authenticator-mobile/iOS/AuthenticatorRustCore/Sources/AuthenticatorRustCore/AuthenticatorRustCore.swift
+	@rm -rf proton-authenticator-mobile/iOS/AuthenticatorRustCore/*.xcframework
+	@rm -rf proton-authenticator-web/test/node_modules/
+	@rm -rf proton-authenticator-web/test/pkg/
+	@rm -rf proton-authenticator-web/test-website/dist/
+	@rm -rf proton-pass-web/test/node_modules/
+	@rm -rf proton-pass-web/test-website/dist/
+	@rm -rf proton-authenticator-mobile/android/build
+	@rm -rf proton-authenticator-mobile/android/lib/src/main/jniLibs
+	@rm -rf proton-authenticator-mobile/android/lib/build
+	@rm -rf proton-authenticator-mobile/android/libTest/build
+	@rm -rf proton-authenticator-mobile/android/libTest/src/main/jniLibs
+
+.PHONY: help
+help: ## Display this help screen
+	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+
+# --- Bindings
+.PHONY: kotlin-bindings
+kotlin-bindings: ## Generate the kotlin bindings
+	@cargo build --release -p proton-pass-mobile
+	@cargo build -p uniffi-bindgen-cli
+	@echo "Generating Kotlin bindings with uniffi-bindgen..."
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+	@mkdir -p ${PROJECT_ROOT}tmp-bindings
+	@${PROJECT_ROOT}target/debug/uniffi-bindgen generate \
+		--library ${PROJECT_ROOT}target/release/libproton_pass_common_mobile.${BINDINGS_LIB_EXT} \
+		--language kotlin \
+		--out-dir ${PROJECT_ROOT}tmp-bindings
+	@rm -rf ${ANDROID_BINDINGS_DIR}
+	@mkdir -p ${ANDROID_BINDINGS_DIR}
+	@cp -r ${PROJECT_ROOT}tmp-bindings/proton/android/pass/* ${ANDROID_BINDINGS_DIR}/../
+	@echo "Wrote Pass Kotlin bindings to ${ANDROID_BINDINGS_DIR}"
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+
+.PHONY: swift-bindings
+swift-bindings: swift-dirs ## Generate the swift bindings
+	@cargo build --release -p proton-pass-mobile
+	@cargo build -p uniffi-bindgen-cli
+	@echo "Generating Swift bindings with uniffi-bindgen..."
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+	@mkdir -p ${PROJECT_ROOT}tmp-bindings
+	@${PROJECT_ROOT}target/debug/uniffi-bindgen generate \
+		--library ${PROJECT_ROOT}target/release/libproton_pass_common_mobile.${BINDINGS_LIB_EXT} \
+		--language swift \
+		--out-dir ${PROJECT_ROOT}tmp-bindings
+	@cp ${PROJECT_ROOT}tmp-bindings/*.h ${IOS_HEADER_DIR}/
+	@cat ${PROJECT_ROOT}tmp-bindings/*.modulemap > ${IOS_HEADER_DIR}/module.modulemap
+	@cp ${PROJECT_ROOT}tmp-bindings/*.swift ${IOS_PACKAGE_DIR}/Sources/PassRustCore/
+	@rm ${IOS_PACKAGE_DIR}/Sources/PassRustCore/PassTotp.swift # Remove redundant file
+	@echo "Wrote Pass Swift bindings to ${IOS_PACKAGE_DIR}/Sources/PassRustCore"
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+
+.PHONY: pass-mobile-unit-test
+pass-mobile-unit-test:  ## Run the unit tests for the pass mobile library
+	@echo "Building for platform: ${JNA_PLATFORM}"
+	@cargo build --release -p proton-pass-mobile
+	@rm -rf ${PROJECT_ROOT}proton-pass-mobile/android/libTest/src/main/jniLibs
+	@mkdir -p ${PROJECT_ROOT}proton-pass-mobile/android/libTest/src/main/jniLibs/${JNA_PLATFORM}
+	@cp "${PROJECT_ROOT}target/release/libproton_pass_common_mobile.${LIBRARY_EXT}" "${PROJECT_ROOT}proton-pass-mobile/android/libTest/src/main/jniLibs/${JNA_PLATFORM}/libproton_pass_common_mobile.${LIBRARY_EXT}"
+
+	# Generate Kotlin JVM bindings using uniffi-bindgen
+	@echo "Generating Kotlin bindings with uniffi-bindgen..."
+	@rm -rf ${PROJECT_ROOT}proton-pass-mobile/android/libTest/src/main/kotlin
+	@mkdir -p ${PROJECT_ROOT}proton-pass-mobile/android/libTest/src/main/kotlin
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+	@mkdir -p ${PROJECT_ROOT}tmp-bindings
+	@cargo run -p uniffi-bindgen-cli -- generate \
+		--library ${PROJECT_ROOT}target/release/libproton_pass_common_mobile.${BINDINGS_LIB_EXT} \
+		--language kotlin \
+		--out-dir ${PROJECT_ROOT}tmp-bindings \
+		--no-format
+	@mkdir -p ${PROJECT_ROOT}proton-pass-mobile/android/libTest/src/main/kotlin/
+	@mv ${PROJECT_ROOT}tmp-bindings/* ${PROJECT_ROOT}proton-pass-mobile/android/libTest/src/main/kotlin/
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+
+	# Run unit test
+	@cd ${PROJECT_ROOT}proton-pass-mobile/android && ./gradlew :libTest:test --no-configuration-cache --rerun-tasks
+
+# --- Build
+.PHONY: swift-dirs
+swift-dirs: ## Build the dir structure for swift libs
+	@mkdir -p ${IOS_HEADER_DIR}
+	@mkdir -p ${IOS_FRAMEWORK_DIR}
+	@mkdir -p ${IOS_PACKAGE_DIR}/Sources/PassRustCore
+
+.PHONY: ios-lib-macos
+ios-lib-macos: ## Build the iOS library for macOS (arm64 + x86_64)
+	@cargo build -p proton-pass-mobile --release --target aarch64-apple-darwin
+	@cargo build -p proton-pass-mobile --release --target x86_64-apple-darwin
+
+.PHONY: ios-lib-maccatalyst
+ios-lib-maccatalyst: ## Build the iOS library for Mac Catalyst (Apple Silicon)
+	@cargo build -p proton-pass-mobile --release --target aarch64-apple-ios-macabi
+
+.PHONY: ios-lib-ios
+ios-lib-ios: ## Build the iOS library for iOS
+	@cargo build -p proton-pass-mobile --release --target aarch64-apple-ios
+
+.PHONY: ios-lib-ios-sim
+ios-lib-ios-sim: ## Build the iOS library for iOS arm simulators
+	@cargo build -p proton-pass-mobile --release --target aarch64-apple-ios-sim
+
+.PHONY: ios-min-xcframework
+ios-min-xcframework: ios-lib-ios-sim ## Build a minimal xcframework for iOS arm simulators just to test the build pipeline
+	@xcodebuild -create-xcframework \
+               -library "target/aarch64-apple-ios-sim/release/${IOS_LIB_NAME}" \
+               -headers proton-pass-mobile/iOS/headers \
+               -output "${IOS_FRAMEWORK_DIR}/${IOS_XCFRAMEWORK_NAME}"
+	@mv "${IOS_FRAMEWORK_DIR}/${IOS_XCFRAMEWORK_NAME}" "${IOS_PACKAGE_DIR}/${IOS_XCFRAMEWORK_NAME}"
+
+.PHONY: ios-lipo-macos
+ios-lipo-macos: ios-lib-macos ## Create universal macOS library (arm64 + x86_64)
+	@mkdir -p target/universal-macos/release
+	@lipo -create \
+		"target/aarch64-apple-darwin/release/${IOS_LIB_NAME}" \
+		"target/x86_64-apple-darwin/release/${IOS_LIB_NAME}" \
+		-output "target/universal-macos/release/${IOS_LIB_NAME}"
+
+.PHONY: ios-xcframework
+ios-xcframework: ios-lipo-macos ios-lib-maccatalyst ios-lib-ios ios-lib-ios-sim ## Build the iOS xcframework
+	@xcodebuild -create-xcframework \
+               -library "target/aarch64-apple-ios/release/${IOS_LIB_NAME}" \
+               -headers proton-pass-mobile/iOS/headers \
+               -library "target/aarch64-apple-ios-sim/release/${IOS_LIB_NAME}" \
+               -headers proton-pass-mobile/iOS/headers \
+               -library "target/universal-macos/release/${IOS_LIB_NAME}" \
+               -headers proton-pass-mobile/iOS/headers \
+               -library "target/aarch64-apple-ios-macabi/release/${IOS_LIB_NAME}" \
+               -headers proton-pass-mobile/iOS/headers \
+               -output "${IOS_FRAMEWORK_DIR}/${IOS_XCFRAMEWORK_NAME}"
+	@mv "${IOS_FRAMEWORK_DIR}/${IOS_XCFRAMEWORK_NAME}" "${IOS_PACKAGE_DIR}/${IOS_XCFRAMEWORK_NAME}"
+
+.PHONY: ios-package
+ios-package: clean swift-bindings ios-xcframework ## Update the iOS package
+
+.PHONY: android-dirs
+android-dirs: ## Build the dir structure for android libs
+	@mkdir -p ${ANDROID_JNI_DIR}/{armeabi-v7a,arm64-v8a,x86_64}
+
+.PHONY: android-lib-armv7
+android-lib-armv7: android-dirs ## Build the android library for armv7
+	@cargo build -p proton-pass-mobile --release --target armv7-linux-androideabi
+	@arm-none-eabi-strip "target/armv7-linux-androideabi/release/${MOBILE_LIB_NAME}" || arm-linux-gnueabihf-strip "target/armv7-linux-androideabi/release/${MOBILE_LIB_NAME}" || echo "Could not strip armv7 shared library"
+	@cp "target/armv7-linux-androideabi/release/${MOBILE_LIB_NAME}" "${ANDROID_JNI_DIR}/armeabi-v7a/${MOBILE_LIB_NAME}"
+
+.PHONY: android-lib-aarch64
+android-lib-aarch64: android-dirs ## Build the android library for aarch64
+	@cargo build -p proton-pass-mobile --release --target aarch64-linux-android
+	@aarch64-linux-gnu-strip "target/aarch64-linux-android/release/${MOBILE_LIB_NAME}" || echo "Could not strip aarch64 shared library"
+	@cp "target/aarch64-linux-android/release/${MOBILE_LIB_NAME}" "${ANDROID_JNI_DIR}/arm64-v8a/${MOBILE_LIB_NAME}"
+
+.PHONY: android-lib-x86_64
+android-lib-x86_64: android-dirs ## Build the android library for x86_64
+	@cargo build -p proton-pass-mobile --release --target x86_64-linux-android
+	@strip "target/x86_64-linux-android/release/${MOBILE_LIB_NAME}" || echo "Could not strip x86_64 shared library"
+	@cp "target/x86_64-linux-android/release/${MOBILE_LIB_NAME}" "${ANDROID_JNI_DIR}/x86_64/${MOBILE_LIB_NAME}"
+
+.PHONY: android-build-lib
+android-build-lib:
+	@cd ${PROJECT_ROOT}proton-pass-mobile/android && ./gradlew :lib:assembleRelease --no-configuration-cache
+
+.PHONY: android
+android: android-lib-aarch64 android-lib-armv7 android-lib-x86_64 android-build-lib ## Build all the android variants
+
+# --- Web
+.PHONY: web-setup
+web-setup:
+	@rm -rf "${WEB_BUILD_DIR}" && mkdir "${WEB_BUILD_DIR}"
+
+.PHONY: web-worker
+web-worker: ## Build the web worker artifacts
+	@echo "--- Building web-worker"
+	@${WEB_CARGO_ENV} wasm-pack build proton-pass-web --scope protontech --features web_worker
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "worker",/g' "${WEB_DIR}/pkg/package.json"
+	@mv "${WEB_DIR}/pkg" "${WEB_BUILD_DIR}/worker"
+
+.PHONY: web-ui
+web-ui: ## Build the web ui artifacts
+	@echo "--- Building web-ui"
+	@${WEB_CARGO_ENV} wasm-pack build proton-pass-web --scope protontech --features web_ui
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "ui",/g' "${WEB_DIR}/pkg/package.json"
+	@mv "${WEB_DIR}/pkg" "${WEB_BUILD_DIR}/ui"
+
+.PHONY: web-password
+web-password: ## Build the web password artifacts
+	@echo "--- Building web-password"
+	@${WEB_CARGO_ENV} wasm-pack build proton-pass-web --scope protontech --features web_password
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "password",/g' "${WEB_DIR}/pkg/package.json"
+	@mv "${WEB_DIR}/pkg" "${WEB_BUILD_DIR}/password"
+
+.PHONY: web-username
+web-username: ## Build the web username artifacts
+	@echo "--- Building web-username"
+	@${WEB_CARGO_ENV} wasm-pack build proton-pass-web --scope protontech --features web_username
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "username",/g' "${WEB_DIR}/pkg/package.json"
+	@mv "${WEB_DIR}/pkg" "${WEB_BUILD_DIR}/username"
+
+.PHONY: web-cxf
+web-cxf: ## Build the web cxf artifacts
+	@echo "--- Building web-cxf"
+	@${WEB_CARGO_ENV} wasm-pack build proton-pass-web --scope protontech --features web_cxf
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "cxf",/g' "${WEB_DIR}/pkg/package.json"
+	@mv "${WEB_DIR}/pkg" "${WEB_BUILD_DIR}/cxf"
+
+.PHONY: web-duplicate
+web-duplicate: ## Build the web duplicate artifacts
+	@echo "--- Building web-duplicate"
+	@${WEB_CARGO_ENV} wasm-pack build proton-pass-web --scope protontech --features web_duplicate
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "duplicate",/g' "${WEB_DIR}/pkg/package.json"
+	@mv "${WEB_DIR}/pkg" "${WEB_BUILD_DIR}/duplicate"
+
+.PHONY: web-image
+web-image: ## Build the web image artifacts
+	@echo "--- Building web-image"
+	@${WEB_CARGO_ENV} wasm-pack build proton-pass-web --scope protontech --features web_image
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "image",/g' "${WEB_DIR}/pkg/package.json"
+	@mv "${WEB_DIR}/pkg" "${WEB_BUILD_DIR}/image"
+
+.PHONY: web-proto
+web-proto: ## Build the web proto artifacts
+	@echo "--- Building web-proto"
+	@${WEB_CARGO_ENV} wasm-pack build proton-pass-web --scope protontech --features web_proto
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "proto",/g' "${WEB_DIR}/pkg/package.json"
+	@mv "${WEB_DIR}/pkg" "${WEB_BUILD_DIR}/proto"
+
+.PHONY: web
+web: web-setup web-worker web-ui web-password web-username web-cxf web-duplicate web-image web-proto ## Build the web artifacts
+	@cp "${WEB_DIR}/package.json" "${WEB_BUILD_DIR}/package.json"
+
+.PHONY: web-test
+web-test: web-setup ## Test the web artifacts
+	@rm -rf "${WEB_TEST_BUILD_DIR}" && mkdir -p "${WEB_TEST_BUILD_DIR}"
+	@echo "--- Building web-worker"
+	@wasm-pack build proton-pass-web --scope protontech --target nodejs --out-dir "${WEB_TEST_BUILD_DIR}/worker" --features "web_worker,experimental"
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "worker",/g' "${WEB_TEST_BUILD_DIR}/worker/package.json"
+
+	@echo "--- Building web-ui"
+	@wasm-pack build proton-pass-web --scope protontech --target nodejs --out-dir "${WEB_TEST_BUILD_DIR}/ui" --features "web_ui,experimental"
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "ui",/g' "${WEB_TEST_BUILD_DIR}/ui/package.json"
+
+	@echo "--- Building web-password"
+	@wasm-pack build proton-pass-web --scope protontech --target nodejs --out-dir "${WEB_TEST_BUILD_DIR}/password" --features "web_password,experimental"
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "password",/g' "${WEB_TEST_BUILD_DIR}/password/package.json"
+
+	@echo "--- Building web-username"
+	@wasm-pack build proton-pass-web --scope protontech --target nodejs --out-dir "${WEB_TEST_BUILD_DIR}/username" --features "web_username,experimental"
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "username",/g' "${WEB_TEST_BUILD_DIR}/username/package.json"
+
+	@echo "--- Building web-cxf"
+	@wasm-pack build proton-pass-web --scope protontech --target nodejs --out-dir "${WEB_TEST_BUILD_DIR}/cxf" --features "web_cxf,experimental"
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "cxf",/g' "${WEB_TEST_BUILD_DIR}/cxf/package.json"
+
+	@echo "--- Building web-duplicate"
+	@wasm-pack build proton-pass-web --scope protontech --target nodejs --out-dir "${WEB_TEST_BUILD_DIR}/duplicate" --features "web_duplicate,experimental"
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "duplicate",/g' "${WEB_TEST_BUILD_DIR}/duplicate/package.json"
+
+	@echo "--- Building web-image"
+	@wasm-pack build proton-pass-web --scope protontech --target nodejs --out-dir "${WEB_TEST_BUILD_DIR}/image" --features "web_image,experimental"
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "image",/g' "${WEB_TEST_BUILD_DIR}/image/package.json"
+
+	@echo "--- Building web-proto"
+	@wasm-pack build proton-pass-web --scope protontech --target nodejs --out-dir "${WEB_TEST_BUILD_DIR}/proto" --features "web_proto,experimental"
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "proto",/g' "${WEB_TEST_BUILD_DIR}/proto/package.json"
+
+	@cp "${WEB_DIR}/package.json" "${WEB_TEST_BUILD_DIR}/package.json"
+	@cd ${WEB_TEST_DIR} && bun test
+
+.PHONY: pass-test-website-build
+pass-test-website-build: web-setup ## Build the pass web test website artifacts for browser
+	@rm -rf "${WEB_TEST_BUILD_DIR}" && mkdir -p "${WEB_TEST_BUILD_DIR}"
+	@echo "--- Building web-duplicate for browser"
+	@wasm-pack build proton-pass-web --scope protontech --target web --out-dir "${WEB_TEST_BUILD_DIR}/duplicate" --features "web_duplicate,experimental"
+	@sed -i'' -e 's/"name": "@protontech\/proton-pass-web",/"name": "duplicate",/g' "${WEB_TEST_BUILD_DIR}/duplicate/package.json"
+	@cp "${WEB_DIR}/package.json" "${WEB_TEST_BUILD_DIR}/package.json"
+
+.PHONY: pass-test-website
+pass-test-website: pass-test-website-build ## Build the pass web test website for deployment
+	@rm -rf "${WEB_DIR}/test-website/dist" && mkdir -p "${WEB_DIR}/test-website/dist/pkg"
+	@echo "--- Copying WASM artifacts to dist"
+	@cp -R "${WEB_TEST_BUILD_DIR}"/* "${WEB_DIR}/test-website/dist/pkg/"
+	@echo "--- Copying test website files to dist"
+	@cp "${WEB_DIR}/test-website"/*.html "${WEB_DIR}/test-website"/*.js "${WEB_DIR}/test-website"/*.css "${WEB_DIR}/test-website/dist/"
+	@echo "--- Test website ready for deployment in ${WEB_DIR}/test-website/dist"
+
+
+# Authenticator
+AUTHENTICATOR_MOBILE_LIB_NAME:=libproton_authenticator_common_mobile.so
+AUTHENTICATOR_ANDROID_BINDINGS_DIR:=${PROJECT_ROOT}proton-authenticator-mobile/android/lib/src/main/java/proton/android/authenticator/commonrust
+AUTHENTICATOR_ANDROID_JNI_DIR:=${PROJECT_ROOT}proton-authenticator-mobile/android/lib/src/main/jniLibs
+AUTHENTICATOR_IOS_HEADER_DIR:=${PROJECT_ROOT}proton-authenticator-mobile/iOS/headers
+AUTHENTICATOR_IOS_FRAMEWORK_DIR:=${PROJECT_ROOT}proton-authenticator-mobile/iOS/frameworks
+AUTHENTICATOR_IOS_LIB_DIR:=${PROJECT_ROOT}proton-authenticator-mobile/iOS/libs
+AUTHENTICATOR_IOS_LIB_NAME:=libproton_authenticator_common_mobile.a
+AUTHENTICATOR_IOS_PACKAGE_DIR:=${PROJECT_ROOT}proton-authenticator-mobile/iOS/AuthenticatorRustCore
+AUTHENTICATOR_IOS_XCFRAMEWORK_NAME:=RustFramework.xcframework
+AUTHENTICATOR_WEB_DIR:=${PROJECT_ROOT}proton-authenticator-web
+AUTHENTICATOR_WEB_BUILD_DIR:=${AUTHENTICATOR_WEB_DIR}/dist
+AUTHENTICATOR_WEB_TEST_DIR:=${AUTHENTICATOR_WEB_DIR}/test
+AUTHENTICATOR_WEB_TEST_BUILD_DIR:=${AUTHENTICATOR_WEB_DIR}/test/pkg
+
+
+.PHONY: authenticator-kotlin-bindings
+authenticator-kotlin-bindings: ## Generate the kotlin bindings
+	@cargo build --release -p proton-authenticator-mobile
+	@cargo build -p uniffi-bindgen-cli
+	@echo "Generating Kotlin bindings with uniffi-bindgen..."
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+	@mkdir -p ${PROJECT_ROOT}tmp-bindings
+	@${PROJECT_ROOT}target/debug/uniffi-bindgen generate \
+		--library ${PROJECT_ROOT}target/release/libproton_authenticator_common_mobile.${BINDINGS_LIB_EXT} \
+		--language kotlin \
+		--out-dir ${PROJECT_ROOT}tmp-bindings
+	@rm -rf ${AUTHENTICATOR_ANDROID_BINDINGS_DIR}
+	@mkdir -p ${AUTHENTICATOR_ANDROID_BINDINGS_DIR}
+	@cp -r ${PROJECT_ROOT}tmp-bindings/proton/android/authenticator/* ${AUTHENTICATOR_ANDROID_BINDINGS_DIR}/../
+	@rm -rf ${AUTHENTICATOR_ANDROID_BINDINGS_DIR}/../../pass
+	@cp -r ${PROJECT_ROOT}tmp-bindings/proton/android/pass ${AUTHENTICATOR_ANDROID_BINDINGS_DIR}/../../pass
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+
+.PHONY: authenticator-swift-bindings
+authenticator-swift-bindings: authenticator-swift-dirs ## Generate the swift bindings
+	@cargo build --release -p proton-authenticator-mobile
+	@cargo build -p uniffi-bindgen-cli
+	@echo "Generating Swift bindings with uniffi-bindgen..."
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+	@mkdir -p ${PROJECT_ROOT}tmp-bindings
+	@${PROJECT_ROOT}target/debug/uniffi-bindgen generate \
+		--library ${PROJECT_ROOT}target/release/libproton_authenticator_common_mobile.${BINDINGS_LIB_EXT} \
+		--language swift \
+		--out-dir ${PROJECT_ROOT}tmp-bindings
+	@cp ${PROJECT_ROOT}tmp-bindings/*.h ${AUTHENTICATOR_IOS_HEADER_DIR}/
+	@cat ${PROJECT_ROOT}tmp-bindings/*.modulemap > ${AUTHENTICATOR_IOS_HEADER_DIR}/module.modulemap
+	@cp ${PROJECT_ROOT}tmp-bindings/*.swift ${AUTHENTICATOR_IOS_PACKAGE_DIR}/Sources/AuthenticatorRustCore/
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+
+
+.PHONY: authenticator-swift-dirs
+authenticator-swift-dirs: ## Build the dir structure for swift libs
+	@mkdir -p ${AUTHENTICATOR_IOS_HEADER_DIR}
+	@mkdir -p ${AUTHENTICATOR_IOS_FRAMEWORK_DIR}
+	@mkdir -p ${AUTHENTICATOR_IOS_PACKAGE_DIR}/Sources/AuthenticatorRustCore
+
+
+.PHONY: authenticator-ios-lib-macos
+authenticator-ios-lib-macos: ## Build the iOS library for macOS arm
+	@cargo build -p proton-authenticator-mobile --release --target aarch64-apple-darwin
+
+.PHONY: authenticator-ios-lib-ios
+authenticator-ios-lib-ios: ## Build the iOS library for iOS
+	@cargo build -p proton-authenticator-mobile --release --target aarch64-apple-ios
+
+.PHONY: authenticator-ios-lib-ios-sim
+authenticator-ios-lib-ios-sim: ## Build the iOS library for iOS arm simulators
+	@cargo build -p proton-authenticator-mobile --release --target aarch64-apple-ios-sim
+
+.PHONY: authenticator-ios-min-xcframework
+authenticator-ios-min-xcframework: authenticator-ios-lib-ios-sim ## Build a minimal xcframework for iOS arm simulators just to test the build pipeline
+	@xcodebuild -create-xcframework \
+               -library "target/aarch64-apple-ios-sim/release/${AUTHENTICATOR_IOS_LIB_NAME}" \
+               -headers proton-authenticator-mobile/iOS/headers \
+               -output "${AUTHENTICATOR_IOS_FRAMEWORK_DIR}/${AUTHENTICATOR_IOS_XCFRAMEWORK_NAME}"
+
+.PHONY: authenticator-ios-xcframework
+authenticator-ios-xcframework: authenticator-ios-lib-macos authenticator-ios-lib-ios authenticator-ios-lib-ios-sim ## Build the iOS xcframework
+	@xcodebuild -create-xcframework \
+               -library "target/aarch64-apple-ios/release/${AUTHENTICATOR_IOS_LIB_NAME}" \
+               -headers proton-authenticator-mobile/iOS/headers \
+               -library "target/aarch64-apple-ios-sim/release/${AUTHENTICATOR_IOS_LIB_NAME}" \
+               -headers proton-authenticator-mobile/iOS/headers \
+               -library "target/aarch64-apple-darwin/release/${AUTHENTICATOR_IOS_LIB_NAME}" \
+               -headers proton-authenticator-mobile/iOS/headers \
+               -output "${AUTHENTICATOR_IOS_FRAMEWORK_DIR}/${AUTHENTICATOR_IOS_XCFRAMEWORK_NAME}"
+	@mv "${AUTHENTICATOR_IOS_FRAMEWORK_DIR}/${AUTHENTICATOR_IOS_XCFRAMEWORK_NAME}" "${AUTHENTICATOR_IOS_PACKAGE_DIR}/${AUTHENTICATOR_IOS_XCFRAMEWORK_NAME}"
+
+.PHONY: authenticator-ios-package
+authenticator-ios-package: clean authenticator-swift-bindings authenticator-ios-xcframework ## Update the iOS package
+
+
+.PHONY: authenticator-android-dirs
+authenticator-android-dirs: ## Build the dir structure for android libs
+	@mkdir -p ${AUTHENTICATOR_ANDROID_JNI_DIR}/{armeabi-v7a,arm64-v8a,x86_64}
+
+.PHONY: authenticator-android-lib-armv7
+authenticator-android-lib-armv7: authenticator-android-dirs ## Build the android library for armv7
+	@cargo build -p proton-authenticator-mobile --release --target armv7-linux-androideabi
+	@arm-none-eabi-strip "target/armv7-linux-androideabi/release/${AUTHENTICATOR_MOBILE_LIB_NAME}" || arm-linux-gnueabihf-strip "target/armv7-linux-androideabi/release/${AUTHENTICATOR_MOBILE_LIB_NAME}" || echo "Could not strip armv7 shared library"
+	@cp "target/armv7-linux-androideabi/release/${AUTHENTICATOR_MOBILE_LIB_NAME}" "${AUTHENTICATOR_ANDROID_JNI_DIR}/armeabi-v7a/${AUTHENTICATOR_MOBILE_LIB_NAME}"
+
+.PHONY: authenticator-android-lib-aarch64
+authenticator-android-lib-aarch64: authenticator-android-dirs ## Build the android library for aarch64
+	@cargo build -p proton-authenticator-mobile --release --target aarch64-linux-android
+	@aarch64-linux-gnu-strip "target/aarch64-linux-android/release/${AUTHENTICATOR_MOBILE_LIB_NAME}" || echo "Could not strip aarch64 shared library"
+	@cp "target/aarch64-linux-android/release/${AUTHENTICATOR_MOBILE_LIB_NAME}" "${AUTHENTICATOR_ANDROID_JNI_DIR}/arm64-v8a/${AUTHENTICATOR_MOBILE_LIB_NAME}"
+
+.PHONY: authenticator-android-lib-x86_64
+authenticator-android-lib-x86_64: authenticator-android-dirs ## Build the android library for x86_64
+	@cargo build -p proton-authenticator-mobile --release --target x86_64-linux-android
+	@strip "target/x86_64-linux-android/release/${AUTHENTICATOR_MOBILE_LIB_NAME}" || echo "Could not strip x86_64 shared library"
+	@cp "target/x86_64-linux-android/release/${AUTHENTICATOR_MOBILE_LIB_NAME}" "${AUTHENTICATOR_ANDROID_JNI_DIR}/x86_64/${AUTHENTICATOR_MOBILE_LIB_NAME}"
+
+.PHONY: authenticator-android-build-lib
+authenticator-android-build-lib:
+	@cd ${PROJECT_ROOT}proton-authenticator-mobile/android && ./gradlew :lib:assembleRelease --no-configuration-cache
+
+.PHONY: authenticator-android
+authenticator-android: authenticator-android-lib-aarch64 authenticator-android-lib-armv7 authenticator-android-lib-x86_64 authenticator-android-build-lib ## Build all the android variants
+
+.PHONY: authenticator-web-setup
+authenticator-web-setup:
+	@rm -rf "${AUTHENTICATOR_WEB_BUILD_DIR}" && mkdir "${AUTHENTICATOR_WEB_BUILD_DIR}"
+
+.PHONY: authenticator-web-worker
+authenticator-web-worker: ## Build the authenticator web worker artifacts
+	@echo "--- Building authenticator-web-worker"
+	@wasm-pack build proton-authenticator-web --scope protontech
+	@sed -i'' -e 's/"name": "@protontech\/proton-authenticator-web",/"name": "worker",/g' "${AUTHENTICATOR_WEB_DIR}/pkg/package.json"
+	@mv "${AUTHENTICATOR_WEB_DIR}/pkg" "${AUTHENTICATOR_WEB_BUILD_DIR}/worker"
+
+.PHONY: authenticator-web
+authenticator-web: authenticator-web-setup authenticator-web-worker ## Build the authenticator web artifacts
+	@cp "${AUTHENTICATOR_WEB_DIR}/package.json" "${AUTHENTICATOR_WEB_BUILD_DIR}/package.json"
+
+.PHONY: authenticator-web-test-build
+authenticator-web-test-build: authenticator-web-setup ## Build the authenticator web test artifacts
+	@rm -rf "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}" && mkdir -p "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}"
+	@echo "--- Building web-worker"
+	@wasm-pack build proton-authenticator-web --scope protontech --target nodejs --out-dir "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}/worker" --features=qr
+	@sed -i'' -e 's/"name": "@protontech\/proton-authenticator-web",/"name": "worker",/g' "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}/worker/package.json"
+	@cp "${AUTHENTICATOR_WEB_DIR}/package.json" "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}/package.json"
+
+.PHONY: authenticator-test-website-build
+authenticator-test-website-build: authenticator-web-setup ## Build the authenticator web artifacts for browser
+	@rm -rf "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}" && mkdir -p "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}"
+	@echo "--- Building web-worker for browser"
+	@wasm-pack build proton-authenticator-web --scope protontech --target web --out-dir "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}/worker" --features=qr
+	@sed -i'' -e 's/"name": "@protontech\/proton-authenticator-web",/"name": "worker",/g' "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}/worker/package.json"
+	@cp "${AUTHENTICATOR_WEB_DIR}/package.json" "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}/package.json"
+
+.PHONY: authenticator-web-test
+authenticator-web-test: authenticator-web-test-build ## Test the web artifacts
+	@cd ${AUTHENTICATOR_WEB_TEST_DIR} && bun test
+
+.PHONY: authenticator-test-website
+authenticator-test-website: authenticator-test-website-build ## Build the authenticator test website for deployment
+	@rm -rf "${AUTHENTICATOR_WEB_DIR}/test-website/dist" && mkdir -p "${AUTHENTICATOR_WEB_DIR}/test-website/dist/pkg"
+	@echo "--- Copying WASM artifacts to dist"
+	@cp -R "${AUTHENTICATOR_WEB_TEST_BUILD_DIR}"/* "${AUTHENTICATOR_WEB_DIR}/test-website/dist/pkg/"
+	@echo "--- Copying test website files to dist"
+	@cp "${AUTHENTICATOR_WEB_DIR}/test-website"/*.html "${AUTHENTICATOR_WEB_DIR}/test-website"/*.js "${AUTHENTICATOR_WEB_DIR}/test-website"/*.css "${AUTHENTICATOR_WEB_DIR}/test-website/dist/"
+	@echo "--- Test website ready for deployment in ${AUTHENTICATOR_WEB_DIR}/test-website/dist"
+
+.PHONY: authenticator-mobile-unit-test
+authenticator-mobile-unit-test:  ## Run the unit tests for the authenticator mobile library
+	@echo "Building for platform: ${JNA_PLATFORM}"
+	@cargo build --release -p proton-authenticator-mobile
+	@rm -rf ${PROJECT_ROOT}proton-authenticator-mobile/android/libTest/src/main/jniLibs
+	@mkdir -p ${PROJECT_ROOT}proton-authenticator-mobile/android/libTest/src/main/jniLibs/${JNA_PLATFORM}
+	@cp "${PROJECT_ROOT}target/release/libproton_authenticator_common_mobile.${LIBRARY_EXT}" "${PROJECT_ROOT}proton-authenticator-mobile/android/libTest/src/main/jniLibs/${JNA_PLATFORM}/libproton_authenticator_common_mobile.${LIBRARY_EXT}"
+
+	# Generate Kotlin JVM bindings using uniffi-bindgen
+	@echo "Generating Kotlin bindings with uniffi-bindgen..."
+	@rm -rf ${PROJECT_ROOT}proton-authenticator-mobile/android/libTest/src/main/kotlin
+	@mkdir -p ${PROJECT_ROOT}proton-authenticator-mobile/android/libTest/src/main/kotlin
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+	@mkdir -p ${PROJECT_ROOT}tmp-bindings
+	@cargo run -p uniffi-bindgen-cli -- generate \
+		--library ${PROJECT_ROOT}target/release/libproton_authenticator_common_mobile.${BINDINGS_LIB_EXT} \
+		--language kotlin \
+		--out-dir ${PROJECT_ROOT}tmp-bindings \
+		--no-format
+	@mkdir -p ${PROJECT_ROOT}proton-authenticator-mobile/android/libTest/src/main/kotlin/
+	@mv ${PROJECT_ROOT}tmp-bindings/* ${PROJECT_ROOT}proton-authenticator-mobile/android/libTest/src/main/kotlin/
+	@rm -rf ${PROJECT_ROOT}tmp-bindings
+
+	# Run unit test
+	@cd ${PROJECT_ROOT}proton-authenticator-mobile/android && ./gradlew :libTest:test --no-configuration-cache --rerun-tasks

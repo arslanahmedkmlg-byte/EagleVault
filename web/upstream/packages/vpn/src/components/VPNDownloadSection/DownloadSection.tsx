@@ -1,0 +1,482 @@
+import type { ReactElement } from 'react';
+import { useState } from 'react';
+
+import { c } from 'ttag';
+
+import { useUser } from '@proton/account/user/hooks';
+import { useApi } from '@proton/app-context/useApi';
+import { ButtonLike } from '@proton/atoms/Button/ButtonLike';
+import { DashboardCard, DashboardCardContent } from '@proton/atoms/DashboardCard/DashboardCard';
+import { usePopperAnchor } from '@proton/atoms/Popper/usePopperAnchor';
+import Dropdown from '@proton/components/components/dropdown/Dropdown';
+import DropdownButton from '@proton/components/components/dropdown/DropdownButton';
+import DropdownMenu from '@proton/components/components/dropdown/DropdownMenu';
+import DropdownMenuLink from '@proton/components/components/dropdown/DropdownMenuLink';
+import { DropdownSizeUnit } from '@proton/components/components/dropdown/utils';
+import { Tabs } from '@proton/components/components/tabs/Tabs';
+import { getTelemetryUserTier } from '@proton/components/helpers/getTelemetryUserTier';
+import { mapTelemetryOsVersionWithStore } from '@proton/components/helpers/mapTelemetryOsVersionWithStore';
+import { IcArrowDownLine } from '@proton/icons/icons/IcArrowDownLine';
+import { IcArrowOutSquare } from '@proton/icons/icons/IcArrowOutSquare';
+import { IcBrandAmazon } from '@proton/icons/icons/IcBrandAmazon';
+import { IcBrandAndroid } from '@proton/icons/icons/IcBrandAndroid';
+import { IcBrandApple } from '@proton/icons/icons/IcBrandApple';
+import { IcBrandChrome } from '@proton/icons/icons/IcBrandChrome';
+import { IcBrandFirefox } from '@proton/icons/icons/IcBrandFirefox';
+import { IcBrandLinux } from '@proton/icons/icons/IcBrandLinux';
+import { IcBrandMac } from '@proton/icons/icons/IcBrandMac';
+import { IcBrandWindows } from '@proton/icons/icons/IcBrandWindows';
+import { TelemetryAccountDashboardEvents, TelemetryMeasurementGroups } from '@proton/shared/lib/api/telemetry';
+import { APPS } from '@proton/shared/lib/constants';
+import { isAndroid, isDesktop, isIos, isLinux, isMac, isMobile, isWindows } from '@proton/shared/lib/helpers/browser';
+import { sendTelemetryReport } from '@proton/shared/lib/helpers/metrics';
+import appleAppStoreImage from '@proton/styles/assets/img/vpn/download-section/apple-app-store.svg';
+import androidTVPreview from '@proton/styles/assets/img/vpn/download-section/download-preview-androidtv.png';
+import appleTVPreview from '@proton/styles/assets/img/vpn/download-section/download-preview-appletv.png';
+import chromePreview from '@proton/styles/assets/img/vpn/download-section/download-preview-chrome.png';
+import firefoxPreview from '@proton/styles/assets/img/vpn/download-section/download-preview-firefox.png';
+import firetvPreview from '@proton/styles/assets/img/vpn/download-section/download-preview-firetv.png';
+import linuxPreview from '@proton/styles/assets/img/vpn/download-section/download-preview-linux.png';
+import macosPreview from '@proton/styles/assets/img/vpn/download-section/download-preview-macos.png';
+import mobilePreview from '@proton/styles/assets/img/vpn/download-section/download-preview-mobile.png';
+import windowsPreview from '@proton/styles/assets/img/vpn/download-section/download-preview-windows.png';
+import googlePlayStoreImage from '@proton/styles/assets/img/vpn/download-section/google-play-store.svg';
+import { useFlag } from '@proton/unleash/useFlag';
+import clsx from '@proton/utils/clsx';
+
+import { useFetchDownloadLinks } from '../../hooks/useFetchDownloadLinks';
+
+import './DownloadSection.scss';
+
+interface DownloadLink {
+    title: () => string;
+    link: string;
+}
+
+interface DownloadButton {
+    title: () => string;
+    links?: DownloadLink[];
+    link?: string;
+    style?: 'appstore' | 'external';
+    image?: string;
+}
+
+interface TabContent {
+    image?: string;
+    hint?: string;
+    downloadButton: DownloadButton;
+    footnote?: {
+        title: () => string;
+        link: string;
+    };
+}
+
+interface CategoryTab {
+    title: () => string;
+    icon: ReactElement;
+    content: TabContent;
+}
+
+interface Category {
+    tabs: CategoryTab[];
+}
+enum DeviceCategoryIndex {
+    Desktop = 0,
+    Mobile = 1,
+}
+
+enum PlatformIndex {
+    Default = 0,
+    Windows = 0,
+    Mac = 1,
+    Linux = 2,
+    Ios = 0,
+    Android = 1,
+}
+
+function useDownloadData() {
+    const flag = useFlag('DesktopDownloadApiEnabled');
+    const { windows, mac } = useFetchDownloadLinks(flag);
+
+    return [
+        {
+            category: () => c('Download').t`Desktop`,
+            tabs: [
+                ...(windows
+                    ? [
+                          {
+                              title: () => c('Download').t`Windows`,
+                              icon: <IcBrandWindows />,
+                              content: {
+                                  image: windowsPreview,
+                                  downloadButton: {
+                                      title: () => c('Download').t`Download for Windows`,
+                                      links: windows,
+                                  },
+                                  footnote: {
+                                      title: () => c('Download').t`Installation guide`,
+                                      link: 'https://protonvpn.com/support/protonvpn-windows-vpn-application/#installing',
+                                  },
+                              },
+                          },
+                      ]
+                    : []),
+                ...(mac
+                    ? [
+                          {
+                              title: () => c('Download').t`macOS`,
+                              icon: <IcBrandMac />,
+                              content: {
+                                  image: macosPreview,
+                                  downloadButton: {
+                                      title: () => c('Download').t`Download for macOS`,
+                                      links: mac,
+                                  },
+                                  footnote: {
+                                      title: () => c('Download').t`Installation guide`,
+                                      link: 'https://protonvpn.com/support/protonvpn-mac-vpn-application/',
+                                  },
+                              },
+                          },
+                      ]
+                    : []),
+                {
+                    title: () => c('Download').t`Linux`,
+                    icon: <IcBrandLinux />,
+                    content: {
+                        image: linuxPreview,
+                        downloadButton: {
+                            title: () => c('Download').t`Download for Linux`,
+                            link: 'https://protonvpn.com/download-linux',
+                            style: 'external' as const,
+                        },
+                        footnote: {
+                            title: () => c('Download').t`Installation guide`,
+                            link: 'https://protonvpn.com/support/linux-vpn-setup/',
+                        },
+                    },
+                },
+            ],
+        },
+        {
+            category: () => c('Download').t`Mobile`,
+            tabs: [
+                {
+                    title: () => c('Download').t`iPhone/iPad`,
+                    icon: <IcBrandApple />,
+                    content: {
+                        image: mobilePreview,
+                        downloadButton: {
+                            title: () => c('Download').t`Download on the Apple App Store`,
+                            link: 'https://apps.apple.com/app/apple-store/id1437005085?pt=106513916&ct=wa_set_btn&mt=8',
+                            style: 'appstore' as const,
+                            image: appleAppStoreImage,
+                        },
+                        footnote: {
+                            title: () => c('Download').t`Installation guide`,
+                            link: 'https://protonvpn.com/support/protonvpn-ios-vpn-app/',
+                        },
+                    },
+                },
+                {
+                    title: () => c('Download').t`Android`,
+                    icon: <IcBrandAndroid />,
+                    content: {
+                        image: mobilePreview,
+                        downloadButton: {
+                            title: () => c('Download').t`Download on the Google Play Store`,
+                            link: 'https://play.google.com/store/apps/details?id=ch.protonvpn.android&referrer=utm_source\%3Dprotonvpn.com\%26utm_medium\%3Dweb\%26utm_campaign\%3Dwa_set_btn',
+                            style: 'appstore' as const,
+                            image: googlePlayStoreImage,
+                        },
+                        footnote: {
+                            title: () => c('Download').t`Installation guide`,
+                            link: 'https://protonvpn.com/support/best-android-vpn-app/',
+                        },
+                    },
+                },
+            ],
+        },
+        {
+            category: () => c('Download').t`Browser`,
+            tabs: [
+                {
+                    title: () => c('Download').t`Chrome`,
+                    icon: <IcBrandChrome />,
+                    content: {
+                        image: chromePreview,
+                        downloadButton: {
+                            title: () => c('Download').t`Get the extension`,
+                            link: 'https://chrome.google.com/webstore/detail/proton-vpn-a-swiss-vpn-yo/jplgfhpmjnbigmhklmmbgecoobifkmpa',
+                            style: 'external' as const,
+                        },
+                        footnote: {
+                            title: () => c('Download').t`Installation guide`,
+                            link: 'https://protonvpn.com/support/browser-extensions/#chrome',
+                        },
+                    },
+                },
+                {
+                    title: () => c('Download').t`Firefox`,
+                    icon: <IcBrandFirefox />,
+                    content: {
+                        image: firefoxPreview,
+                        downloadButton: {
+                            title: () => c('Download').t`Get the extension`,
+                            link: 'https://addons.mozilla.org/firefox/addon/proton-vpn-firefox-extension/',
+                            style: 'external' as const,
+                        },
+                        footnote: {
+                            title: () => c('Download').t`Installation guide`,
+                            link: 'https://protonvpn.com/support/browser-extensions/#firefox',
+                        },
+                    },
+                },
+            ],
+        },
+        {
+            category: () => c('Download').t`TV`,
+            tabs: [
+                {
+                    title: () => c('Download').t`Apple TV`,
+                    icon: <IcBrandApple />,
+                    content: {
+                        image: appleTVPreview,
+                        downloadButton: {
+                            title: () => c('Download').t`Get the app`,
+                            link: 'https://protonvpn.com/download-appletv',
+                            style: 'external' as const,
+                        },
+                        footnote: {
+                            title: () => c('Download').t`Installation guide`,
+                            link: 'https://protonvpn.com/support/apple-tv',
+                        },
+                    },
+                },
+                {
+                    title: () => c('Download').t`Android TV`,
+                    icon: <IcBrandAndroid />,
+                    content: {
+                        image: androidTVPreview,
+                        downloadButton: {
+                            title: () => c('Download').t`Get the app`,
+                            link: 'https://protonvpn.com/download-androidtv',
+                            style: 'external' as const,
+                        },
+                        footnote: {
+                            title: () => c('Download').t`Installation guide`,
+                            link: 'https://protonvpn.com/support/android-tv/',
+                        },
+                    },
+                },
+                {
+                    title: () => c('Download').t`Fire TV`,
+                    icon: <IcBrandAmazon />,
+                    content: {
+                        image: firetvPreview,
+                        downloadButton: {
+                            title: () => c('Download').t`Get the app`,
+                            link: 'https://protonvpn.com/support/firestick',
+                            style: 'external' as const,
+                        },
+                        footnote: {
+                            title: () => c('Download').t`Installation guide`,
+                            link: 'https://protonvpn.com/support/firestick',
+                        },
+                    },
+                },
+            ],
+        },
+    ];
+}
+
+const findPlatformTabIndex = (deviceIndex: DeviceCategoryIndex): PlatformIndex => {
+    switch (deviceIndex) {
+        case DeviceCategoryIndex.Desktop:
+            if (isMac()) {
+                return PlatformIndex.Mac;
+            }
+            if (isWindows()) {
+                return PlatformIndex.Windows;
+            }
+            if (isLinux() && !isAndroid()) {
+                return PlatformIndex.Linux;
+            }
+            return PlatformIndex.Default;
+
+        case DeviceCategoryIndex.Mobile:
+            return isAndroid() ? PlatformIndex.Android : PlatformIndex.Ios;
+
+        default:
+            return PlatformIndex.Default;
+    }
+};
+
+const CategoryTabs = ({
+    category,
+    deviceCategoryIndex,
+}: {
+    category: Category;
+    deviceCategoryIndex: DeviceCategoryIndex;
+}) => {
+    const api = useApi();
+    const [user] = useUser();
+    const [activeTabIndex, setActiveTabIndex] = useState(() => findPlatformTabIndex(deviceCategoryIndex));
+    const { anchorRef, isOpen, toggle, close } = usePopperAnchor<HTMLButtonElement>();
+
+    const handleDownloadClick = (destination: string) => {
+        void sendTelemetryReport({
+            api,
+            delay: false,
+            event: TelemetryAccountDashboardEvents.downloadCtaClick,
+            measurementGroup: TelemetryMeasurementGroups.accountDashboard,
+            dimensions: {
+                app: APPS.PROTONVPN_SETTINGS,
+                download_destination: mapTelemetryOsVersionWithStore(destination.replaceAll(' ', '-')),
+                user_tier: getTelemetryUserTier(user),
+            },
+        });
+    };
+
+    const subTabs = category.tabs.map((tab: CategoryTab) => ({
+        title: tab.title(),
+        icon: tab.icon,
+        iconPosition: 'leading' as const,
+        content: (
+            <div key={tab.title()} className="pb-2 flex flex-column gap-6">
+                {tab.content.image ? (
+                    <figure
+                        className="flex justify-center m-0 md:w-8/10 mx-auto max-w-custom"
+                        style={{
+                            aspectRatio: '1.778',
+                            '--max-w-custom': '25rem',
+                        }}
+                    >
+                        <img src={tab.content.image} alt={tab.title()} className="w-full h-auto" />
+                    </figure>
+                ) : undefined}
+                <div>
+                    {tab.content.downloadButton.links ? (
+                        <>
+                            <DropdownButton
+                                fullWidth
+                                color="norm"
+                                className="justify-center"
+                                ref={anchorRef}
+                                isOpen={isOpen}
+                                onClick={toggle}
+                                hasCaret
+                            >
+                                {tab.content.downloadButton.title()}
+                            </DropdownButton>
+                            <Dropdown
+                                isOpen={isOpen}
+                                anchorRef={anchorRef}
+                                onClose={close}
+                                size={{ width: DropdownSizeUnit.Dynamic, maxWidth: DropdownSizeUnit.Viewport }}
+                            >
+                                <DropdownMenu>
+                                    {tab.content.downloadButton.links.map((download: DownloadLink) => (
+                                        <DropdownMenuLink
+                                            href={download.link}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-left flex flex-nowrap items-center justify-space-between gap-2"
+                                            key={download.title()}
+                                            onClick={() => handleDownloadClick(tab.title())}
+                                        >
+                                            <span>{download.title()}</span>
+                                            <IcArrowDownLine className="ml-auto shrink-0" />
+                                        </DropdownMenuLink>
+                                    ))}
+                                </DropdownMenu>
+                            </Dropdown>
+                        </>
+                    ) : undefined}
+
+                    {tab.content.downloadButton.link ? (
+                        <ButtonLike
+                            as="a"
+                            color="norm"
+                            fullWidth
+                            className={clsx(
+                                tab.content.downloadButton.style === 'appstore' && 'VpnDownloadSection-button-appstore',
+                                tab.content.downloadButton.style === 'external' && 'VpnDownloadSection-button-external'
+                            )}
+                            href={tab.content.downloadButton.link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={tab.content.downloadButton.title()}
+                            onClick={() => handleDownloadClick(tab.title())}
+                        >
+                            {tab.content.downloadButton.image ? (
+                                <img src={tab.content.downloadButton.image} alt={tab.content.downloadButton.title()} />
+                            ) : (
+                                tab.content.downloadButton.title()
+                            )}
+
+                            {tab.content.downloadButton.style === 'external' && (
+                                <IcArrowOutSquare className="ml-1 shrink-0 rtl:mirror" />
+                            )}
+                        </ButtonLike>
+                    ) : undefined}
+
+                    {tab.content.footnote ? (
+                        <footer className="mt-4 flex justify-center">
+                            <ButtonLike
+                                as="a"
+                                color="norm"
+                                shape="underline"
+                                href={tab.content.footnote.link}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                {tab.content.footnote.title()}
+                                <IcArrowOutSquare className="ml-1 shrink-0 rtl:mirror" />
+                            </ButtonLike>
+                        </footer>
+                    ) : undefined}
+                </div>
+            </div>
+        ),
+    }));
+
+    return <Tabs tabs={subTabs} variant="underline" fullWidth value={activeTabIndex} onChange={setActiveTabIndex} />;
+};
+
+const Download = () => {
+    const [activeDeviceIndex, setActiveDeviceIndex] = useState(() => {
+        if (isDesktop()) {
+            return DeviceCategoryIndex.Desktop;
+        }
+        if (isMobile() || isAndroid() || isIos()) {
+            return DeviceCategoryIndex.Mobile;
+        }
+        return DeviceCategoryIndex.Desktop;
+    });
+
+    const categoryTabs = useDownloadData().map((category) => ({
+        title: category.category(),
+        content: <CategoryTabs key={activeDeviceIndex} category={category} deviceCategoryIndex={activeDeviceIndex} />,
+    }));
+
+    return (
+        <Tabs
+            tabs={categoryTabs}
+            variant="modern"
+            fullWidth
+            value={activeDeviceIndex}
+            onChange={setActiveDeviceIndex}
+        />
+    );
+};
+
+export const DownloadSection = ({ className }: { className?: string }) => {
+    return (
+        <DashboardCard className={className}>
+            <DashboardCardContent>
+                <Download />
+            </DashboardCardContent>
+        </DashboardCard>
+    );
+};

@@ -1,0 +1,433 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useHistory, useLocation } from 'react-router-dom';
+
+import type { SessionKey } from '@protontech/crypto';
+import debounce from 'lodash/debounce';
+import { c } from 'ttag';
+
+import { useAddresses } from '@proton/account/addresses/hooks';
+import { useUser } from '@proton/account/user/hooks';
+import { useNotifications } from '@proton/app-context/useNotifications';
+import { calendarUrlQueryParams } from '@proton/calendar/constants';
+import { validateDeepLinkParams } from '@proton/calendar/utils';
+import { useProtonMeet } from '@proton/meet/hooks/useProtonMeet';
+import { decryptSessionKey, encryptMeetingName } from '@proton/meet/utils/cryptoUtils';
+import { getMeetingLink } from '@proton/meet/utils/getMeetingLink';
+import { getAppHref } from '@proton/shared/lib/apps/helper';
+import { APPS, MEET_APP_NAME } from '@proton/shared/lib/constants';
+import type { Meeting } from '@proton/shared/lib/interfaces/Meet';
+import { MeetingType } from '@proton/shared/lib/interfaces/Meet';
+import { VIDEO_CONFERENCE_PROVIDER } from '@proton/shared/lib/interfaces/calendar/Api';
+import type { EventModel } from '@proton/shared/lib/interfaces/calendar/Event';
+import { parseMeetingLink } from '@proton/shared/lib/meet/parseMeetingLink';
+import { useFlag } from '@proton/unleash/useFlag';
+
+import {
+    VideoConferenceProtonMeetIntegration,
+    useVideoConfTelemetry,
+} from '../videoConferencing/useVideoConfTelemetry';
+import { shouldAutoAddMeetingLink } from './shouldAutoAddMeetingLink';
+import type { IntegrationState } from './types';
+import { useAutoAddMeetLinkNotification } from './useAutoAddMeetLinkNotification';
+import { useMeetFunnelTelemetry } from './useMeetFunnelTelemetry';
+
+interface UseProtonMeetIntegrationParameters {
+    model: EventModel;
+    setModel: (value: EventModel) => void;
+    isActive: boolean;
+    setActiveProvider: (provider: VIDEO_CONFERENCE_PROVIDER | null) => void;
+    setIsVideoConferenceLoading: (value: boolean) => void;
+    isDuplicating?: boolean;
+}
+
+export const useProtonMeetIntegration = ({
+    model,
+    setModel,
+    isActive,
+    setActiveProvider,
+    setIsVideoConferenceLoading,
+    isDuplicating = false,
+}: UseProtonMeetIntegrationParameters) => {
+    const history = useHistory();
+    const location = useLocation();
+
+    const isMeetVideoConferenceEnabled = useFlag('NewScheduleOption');
+    const isAutoAddMeetingLinkEnabled = useFlag('AutoAddMeetingLink');
+
+    const [user] = useUser();
+    const [addresses] = useAddresses();
+
+    const notifications = useNotifications();
+
+    const { showAutoAddNotification, canAutoAddMeeting } = useAutoAddMeetLinkNotification();
+
+    const calendarEmail =
+        model.selfAddress?.Email || addresses?.find(({ ID }) => ID === model.member.addressID)?.Email || user.Email;
+
+    const [processState, setProcessState] = useState<IntegrationState | undefined>(
+        isActive ? 'meeting-present' : undefined
+    );
+
+    const [meetingObject, setMeetingObject] = useState<Meeting | null>(null);
+
+    const isCurrentUserMeetingHost = calendarEmail === model.conferenceHost;
+
+    const [meetingDetails, setMeetingDetails] = useState({
+        id: '',
+    });
+
+    const protonMeetConferenceDetails = useRef(
+        model.conferenceProvider === VIDEO_CONFERENCE_PROVIDER.PROTON_MEET
+            ? {
+                  conferenceId: model.conferenceId,
+                  conferenceUrl: model.conferenceUrl,
+              }
+            : {
+                  conferenceId: '',
+                  conferenceUrl: '',
+              }
+    );
+
+    const modelRef = useRef(model);
+
+    modelRef.current = model;
+
+    const [sessionKey, setSessionKey] = useState<SessionKey | null>(null);
+
+    const { createProtonMeet, getProtonMeetByLinkName } = useProtonMeet();
+
+    const { sentEventProtonMeet } = useVideoConfTelemetry();
+    const { sendMeetingCreated } = useMeetFunnelTelemetry();
+
+    const setupMeetingConference = async ({
+        meetingId,
+        urlPassword,
+        meeting,
+        conferenceId,
+        conferenceUrl,
+    }: {
+        meetingId: string;
+        urlPassword: string;
+        meeting: Meeting;
+        conferenceId: string;
+        conferenceUrl: string;
+    }) => {
+        const decryptedSessionKey = await decryptSessionKey({
+            encryptedSessionKey: meeting?.SessionKey as string,
+            password: urlPassword,
+            salt: meeting?.Salt as string,
+        });
+
+        if (!decryptedSessionKey) {
+            throw new Error('Missing session key');
+        }
+
+        setSessionKey(decryptedSessionKey);
+
+        setMeetingDetails((prev) => ({
+            ...prev,
+            id: meetingId ?? '',
+        }));
+
+        setModel({
+            ...modelRef.current,
+            conferenceId,
+            conferenceUrl,
+            conferenceHost: calendarEmail,
+            conferenceProvider: VIDEO_CONFERENCE_PROVIDER.PROTON_MEET,
+            isConferenceTmpDeleted: false,
+        });
+
+        protonMeetConferenceDetails.current = {
+            conferenceId,
+            conferenceUrl,
+        };
+
+        setMeetingObject(meeting);
+
+        setProcessState('meeting-present');
+    };
+
+    const createVideoConferenceMeeting = async () => {
+        if (processState === 'loading' || processState === 'meeting-present') {
+            return;
+        }
+
+        setActiveProvider(VIDEO_CONFERENCE_PROVIDER.PROTON_MEET);
+
+        if (model.isConferenceTmpDeleted && protonMeetConferenceDetails.current.conferenceUrl) {
+            setModel({
+                ...model,
+                conferenceId: protonMeetConferenceDetails.current.conferenceId,
+                conferenceUrl: protonMeetConferenceDetails.current.conferenceUrl,
+                conferenceProvider: VIDEO_CONFERENCE_PROVIDER.PROTON_MEET,
+                isConferenceTmpDeleted: false,
+            });
+
+            setProcessState('meeting-present');
+
+            return;
+        }
+
+        setIsVideoConferenceLoading(true);
+
+        setProcessState('loading');
+
+        try {
+            const { meetingLink, id, meeting } = await createProtonMeet({
+                meetingName: model.title,
+                type: MeetingType.SCHEDULED,
+                protonCalendar: true,
+            });
+
+            const { meetingId, urlPassword } = parseMeetingLink(meetingLink);
+            const conferenceUrl = getAppHref(meetingLink, APPS.PROTONMEET);
+
+            await setupMeetingConference({
+                meetingId,
+                urlPassword,
+                meeting,
+                conferenceId: id,
+                conferenceUrl,
+            });
+
+            sentEventProtonMeet(VideoConferenceProtonMeetIntegration.create_proton_meet);
+            sendMeetingCreated();
+        } catch (error) {
+            setActiveProvider(null);
+
+            sentEventProtonMeet(VideoConferenceProtonMeetIntegration.create_proton_meet_failed);
+
+            notifications.createNotification({
+                key: 'proton-meet-row-create-meeting-error',
+                type: 'error',
+                text: c('Error').t`Failed to create ${MEET_APP_NAME} video conference`,
+            });
+
+            setProcessState(undefined);
+        } finally {
+            setIsVideoConferenceLoading(false);
+        }
+    };
+
+    const addExistingVideoConferenceMeeting = async (conferenceUrl: string) => {
+        if (processState === 'loading') {
+            return;
+        }
+
+        setActiveProvider(VIDEO_CONFERENCE_PROVIDER.PROTON_MEET);
+
+        setIsVideoConferenceLoading(true);
+
+        setProcessState('loading');
+
+        try {
+            const { meetingId, urlPassword } = parseMeetingLink(conferenceUrl);
+            const meeting = await getProtonMeetByLinkName(meetingId);
+            const meetingLink = getMeetingLink(meeting.MeetingLinkName, urlPassword);
+            const meetingConferenceUrl = getAppHref(meetingLink, APPS.PROTONMEET);
+
+            await setupMeetingConference({
+                meetingId,
+                urlPassword,
+                meeting,
+                conferenceId: meetingId,
+                conferenceUrl: meetingConferenceUrl,
+            });
+
+            sentEventProtonMeet(VideoConferenceProtonMeetIntegration.add_existing_proton_meet);
+            sendMeetingCreated();
+        } catch (error) {
+            setActiveProvider(null);
+
+            sentEventProtonMeet(VideoConferenceProtonMeetIntegration.add_existing_proton_meet_failed);
+
+            notifications.createNotification({
+                key: 'proton-meet-row-add-existing-meeting-error',
+                type: 'error',
+                text: c('Error').t`Failed to add existing ${MEET_APP_NAME} video conference`,
+            });
+
+            setProcessState(undefined);
+        } finally {
+            setIsVideoConferenceLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (!isMeetVideoConferenceEnabled) {
+            return;
+        }
+
+        const searchParams = new URLSearchParams(location.search);
+
+        const shouldCreateMeeting =
+            (Number(searchParams.get(calendarUrlQueryParams.videoConferenceProvider)) as VIDEO_CONFERENCE_PROVIDER) ===
+            VIDEO_CONFERENCE_PROVIDER.PROTON_MEET;
+
+        const { conferenceUrl } = validateDeepLinkParams(searchParams);
+
+        const cleanupUrlParams = () => {
+            searchParams.delete(calendarUrlQueryParams.videoConferenceProvider);
+            searchParams.delete(calendarUrlQueryParams.conferenceUrl);
+
+            history.replace({
+                ...location,
+                search: searchParams.toString() ? `?${searchParams.toString()}` : '',
+            });
+        };
+
+        if (shouldCreateMeeting && !conferenceUrl) {
+            void createVideoConferenceMeeting();
+            cleanupUrlParams();
+        } else if (shouldCreateMeeting && conferenceUrl) {
+            void addExistingVideoConferenceMeeting(conferenceUrl);
+            cleanupUrlParams();
+        }
+    }, [history, location, isMeetVideoConferenceEnabled]);
+
+    const validAttendeeCount = model.attendees.filter((attendee) => attendee.email !== user.Email).length;
+    const prevValidAttendeeCount = useRef(validAttendeeCount);
+    const triedToAddMeetingLinkToDuplicateEvent = useRef(false);
+
+    useEffect(() => {
+        const autoAddAvailable = isMeetVideoConferenceEnabled && isAutoAddMeetingLinkEnabled && canAutoAddMeeting;
+
+        if (!autoAddAvailable) {
+            return;
+        }
+
+        const autoAddMeeting = shouldAutoAddMeetingLink({
+            model,
+            attendeesCount: validAttendeeCount,
+            prevAttendeesCount: prevValidAttendeeCount.current,
+            isDuplicating,
+            triedAddingMeetingLinkToDuplicateEvent: triedToAddMeetingLinkToDuplicateEvent.current,
+        });
+
+        if (autoAddMeeting) {
+            void createVideoConferenceMeeting().then(() => {
+                showAutoAddNotification();
+            });
+        }
+
+        if (isDuplicating) {
+            triedToAddMeetingLinkToDuplicateEvent.current = true;
+        }
+
+        prevValidAttendeeCount.current = validAttendeeCount;
+    }, [
+        isMeetVideoConferenceEnabled,
+        validAttendeeCount,
+        model.conferenceUrl,
+        model.isConferenceTmpDeleted,
+        model.conferenceProvider,
+        isDuplicating,
+        isAutoAddMeetingLinkEnabled,
+        canAutoAddMeeting,
+        showAutoAddNotification,
+    ]);
+
+    const setupInProgress = useRef(false);
+
+    // Setup to access the meeting details (sessionKey)
+    const setup = async () => {
+        if (
+            !model.conferenceId ||
+            !model.conferenceUrl ||
+            setupInProgress.current ||
+            !isMeetVideoConferenceEnabled ||
+            !isCurrentUserMeetingHost
+        ) {
+            return;
+        }
+
+        const { meetingId, urlPassword } = parseMeetingLink(model.conferenceUrl);
+
+        if (!meetingId) {
+            return;
+        }
+
+        setupInProgress.current = true;
+
+        let meeting: Meeting;
+
+        try {
+            meeting = await getProtonMeetByLinkName(meetingId);
+        } catch {
+            setupInProgress.current = false;
+
+            return;
+        }
+
+        const decryptedSessionKey = await decryptSessionKey({
+            encryptedSessionKey: meeting?.SessionKey as string,
+            password: urlPassword,
+            salt: meeting?.Salt as string,
+        });
+
+        if (!decryptedSessionKey) {
+            throw new Error('Missing session key');
+        }
+
+        setSessionKey(decryptedSessionKey);
+
+        setMeetingDetails((prev) => ({
+            ...prev,
+            id: meetingId ?? '',
+        }));
+
+        setMeetingObject(meeting as Meeting);
+
+        setupInProgress.current = false;
+    };
+
+    useEffect(() => {
+        if (isActive && !meetingDetails.id && model.conferenceUrl) {
+            void setup();
+        }
+    }, []);
+
+    const prevTitle = useRef(model.title);
+
+    const encryptTitle = useCallback(async () => {
+        if (!sessionKey) {
+            return;
+        }
+
+        const newModel = {
+            ...modelRef.current,
+            encryptedTitle: await encryptMeetingName(modelRef.current.title, sessionKey),
+        };
+        setModel(newModel);
+    }, [sessionKey]);
+
+    const debouncedEncryptTitle = useMemo(() => debounce(encryptTitle, 250), [encryptTitle]);
+
+    useEffect(() => {
+        if (prevTitle.current === model.title) {
+            return;
+        }
+
+        prevTitle.current = model.title;
+
+        void debouncedEncryptTitle();
+    }, [model.title]);
+
+    return {
+        processState,
+        meetingObject,
+        meetingDetails,
+        createVideoConferenceMeeting,
+        deleteProtonMeet: () => {
+            setActiveProvider(null);
+            setModel({
+                ...model,
+                isConferenceTmpDeleted: true,
+            });
+
+            setProcessState(undefined);
+        },
+        setup,
+    };
+};

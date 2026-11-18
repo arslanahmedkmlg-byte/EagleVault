@@ -1,0 +1,450 @@
+import isDeepEqual from 'lodash/isEqual';
+
+import type {
+    ChatCompletionsFunctionTool,
+    ClientToolExecutor,
+    ClientToolResult,
+    PendingClientToolCall,
+} from '@proton/lumo-api-client/core/types';
+import getRandomString, { DEFAULT_LOWERCASE_CHARSET } from '@proton/utils/getRandomString';
+
+import { ToolInputError, UnknownReferenceError } from '../contracts/errors';
+import type {
+    ActionRequest,
+    ChipSummary,
+    ReferenceLabels,
+    ReferenceRegistry,
+    ToolDefinition,
+    ToolHandlers,
+    ToolImage,
+    ToolName,
+} from '../contracts/types';
+import { LOAD_GUIDE_TOOL_NAME, resolveGuide } from './loadGuide';
+import { buildToolDescriptors } from './tools';
+import { validateToolArgs } from './validate';
+
+/**
+ * The framework's tool layer as a {@link ClientToolExecutor} — the port the transport
+ * (`@proton/lumo-api-client`) drives its multi-round loop through. The transport owns the round loop;
+ * this factory owns the per-call work: advertise, validate, guard, run, confirm mutations, serialise.
+ * It stays product-blind — definitions, handlers, and confirm UI are all injected.
+ */
+
+/** A reference-shaped token, e.g. `email-a1b2c3` — `<kind>-<6 base36>`. */
+const REFERENCE_PATTERN = /^[a-z]+-[0-9a-z]{6}$/;
+
+/**
+ * Marks a read payload as content to report on, not instructions to obey. The per-executor nonce keeps the
+ * delimiter unguessable, and stripping to a fixed point keeps it unspoofable: one pass would splice the two
+ * halves of a bisected closing tag back into a working one.
+ */
+const createUntrustedFence = () => {
+    const tag = `untrusted-data-${getRandomString(8, DEFAULT_LOWERCASE_CHARSET)}`;
+    const strip = (payload: string) => {
+        let stripped = payload;
+        while (stripped.includes(tag)) {
+            stripped = stripped.replaceAll(tag, '');
+        }
+        return stripped;
+    };
+    return (payload: string) => `<${tag}>\n${strip(payload)}\n</${tag}>`;
+};
+
+export type ConfirmDecision = { action: 'apply'; params: Record<string, any> } | { action: 'cancel' };
+
+export enum ConfirmOutcome {
+    APPLIED = 'applied',
+    FAILED = 'failed',
+}
+
+/**
+ * Human-in-the-loop confirmation for mutations, awaited inside `execute()` (the transport has no notion
+ * of approval). The (possibly edited) params from an `apply` are what the handler runs with.
+ */
+export interface ConfirmController {
+    requestConfirmation(action: ActionRequest, labels: ReferenceLabels): Promise<ConfirmDecision>;
+    /** The click cannot stand in for this: a handler that refuses resolves like one that complied. */
+    reportOutcome(outcome: ConfirmOutcome): void;
+}
+
+/** A transparency chip emitted per tool run for the product's UI. `payload` is what was fed to the model. */
+export interface ToolChip {
+    tool: ToolName;
+    summary: ChipSummary;
+    payload: string;
+}
+
+export interface ClientToolExecutorConfig {
+    definitions: ToolDefinition[];
+    handlers: ToolHandlers;
+    references: ReferenceRegistry;
+    /** Required for mutations; a mutation call without it is rejected. Omit for a read-only product. */
+    confirm?: ConfirmController;
+    loadedGuides?: Iterable<ToolName>;
+    /** Aliases a call name before dispatch, to absorb common model mistakes (e.g. singular→plural). */
+    normalizeName?: (name: string) => string;
+    onChip?: (chip: ToolChip) => void;
+    onTrace?: (error: unknown) => void;
+    loadGuideToolName?: ToolName;
+    /**
+     * The product's own system prompt describes every tool: all are advertised from the first round,
+     * and what counts as a loaded guide is set by the caller through `setLoadedGuides`.
+     */
+    standalonePrompt?: boolean;
+}
+
+interface LoadGuideReplies {
+    noGuide: (target: ToolName) => ClientToolResult;
+    alreadyLoaded: (target: ToolName) => ClientToolResult;
+    noBody: (target: ToolName) => ClientToolResult;
+    loaded: (target: ToolName, guide: string) => ClientToolResult;
+}
+
+const okResult = (content: string): ClientToolResult => ({ content });
+const errorResult = (message: string): ClientToolResult => ({
+    content: JSON.stringify({ error: message }),
+    is_error: true,
+});
+
+const parseArgs = (raw: string): unknown => {
+    try {
+        return JSON.parse(raw || '{}');
+    } catch {
+        return raw;
+    }
+};
+
+const COMPOSED_LOAD_GUIDE_REPLIES: LoadGuideReplies = {
+    noGuide: () => errorResult('There is no guide for that tool.'),
+    alreadyLoaded: () => okResult('That guide is already loaded. Call the tool now; do not load it again.'),
+    noBody: () => okResult('There is no extra guidance for that tool. It is now available, so call it as described.'),
+    loaded: (target, guide) =>
+        okResult(
+            `Usage guide for ${target} — its tool is now available, and you MUST follow this guide every time you call it. Call it now to continue the work; never reply to the user about this guide.\n\n${guide}`
+        ),
+};
+
+const standaloneNoGuide = (target: ToolName) =>
+    okResult(`${target} has no guide; its description covers everything it needs.`);
+
+const STANDALONE_LOAD_GUIDE_REPLIES: LoadGuideReplies = {
+    noGuide: standaloneNoGuide,
+    alreadyLoaded: (target) => okResult(`The ${target} guide was already loaded earlier in this conversation.`),
+    noBody: standaloneNoGuide,
+    loaded: (target, guide) =>
+        okResult(`The ${target} guide was loaded. It follows below and applies to every ${target} call.\n\n${guide}`),
+};
+
+const unknownReferenceMessage = (reference: string): string =>
+    `Unknown reference "${reference}": no earlier result in this conversation issued it. Use a reference exactly as a result gave it.`;
+
+/**
+ * Reject any reference-shaped param value the registry never issued (hallucination guard), skipping the
+ * definition's {@link ToolDefinition.freeTextParams} — a keyword like "e-ticket" is reference-shaped but
+ * can only ever be free text.
+ */
+const assertReferencesResolve = (
+    params: Record<string, any>,
+    references: ReferenceRegistry,
+    freeTextParams: readonly string[] = []
+): void => {
+    const check = (value: any) => {
+        if (typeof value === 'string' && REFERENCE_PATTERN.test(value) && !references.has(value)) {
+            throw new UnknownReferenceError(value);
+        } else if (Array.isArray(value)) {
+            value.forEach(check);
+        }
+    };
+    Object.entries(params)
+        .filter(([param]) => !freeTextParams.includes(param))
+        .forEach(([, value]) => check(value));
+};
+
+/**
+ * Map each param value the registry has a label for to that label, for the confirm card. Any string is
+ * looked up, not only reference-shaped ones, because a fixed reference such as `folder-inbox` does not fit
+ * {@link REFERENCE_PATTERN}.
+ */
+export const collectLabels = (params: Record<string, any>, references: ReferenceRegistry): ReferenceLabels => {
+    const labels: ReferenceLabels = {};
+    const collect = (value: any) => {
+        if (typeof value === 'string') {
+            const label = references.labelFor(value);
+            if (label) {
+                labels[value] = label;
+            }
+        } else if (Array.isArray(value)) {
+            value.forEach(collect);
+        }
+    };
+    Object.values(params).forEach(collect);
+    return labels;
+};
+
+/**
+ * What actually ran, for the model's closing prose. Left to itself the model reports the call it
+ * proposed — announcing three emails the user cut down to one at the confirm step. Silent when the
+ * card came back untouched, since restating the model's own arguments only costs context.
+ */
+const describeApplied = (proposed: Record<string, any>, approved: Record<string, any>): string => {
+    if (isDeepEqual(proposed, approved)) {
+        return '';
+    }
+    const shortened = Object.entries(approved)
+        .filter(([param, value]) => Array.isArray(value) && value.length < (proposed[param]?.length ?? 0))
+        .map(([param, value]) => `${value.length} of the ${proposed[param].length} proposed ${param}`);
+    const deselection = shortened.length
+        ? ` The user deselected some before approving, so it applied to ${shortened.join(', ')}.`
+        : '';
+    return `The user edited it before approving; it ran with exactly these parameters: ${JSON.stringify(approved)}.${deselection} Describe only what those say.`;
+};
+
+/** Per-batch wiring: both entries belong to the chain that started the batch, not to the executor. */
+interface ExecuteOptions {
+    /**
+     * Scopes a batch to the chain that started it. Once it aborts, the remaining calls are skipped
+     * rather than confirmed and run against whatever turn has replaced that chain.
+     */
+    signal?: AbortSignal;
+    /** Where a handler's {@link ToolDeps.showImage} lands — the chain decides what it does with it. */
+    showImage?: (image: ToolImage) => void;
+}
+
+export interface LumoClientToolExecutor extends ClientToolExecutor {
+    getLoadedGuides(): ToolName[];
+    /** Standalone-prompt mode: the guides whose bodies the turns about to be sent still carry; anything else loads afresh. */
+    setLoadedGuides(guides: ToolName[]): void;
+    execute(calls: PendingClientToolCall[], options?: ExecuteOptions): Promise<ClientToolResult[]>;
+}
+
+export const createClientToolExecutor = (config: ClientToolExecutorConfig): LumoClientToolExecutor => {
+    const {
+        definitions,
+        handlers,
+        references,
+        confirm,
+        normalizeName,
+        onChip,
+        onTrace,
+        loadGuideToolName = LOAD_GUIDE_TOOL_NAME,
+        standalonePrompt = false,
+    } = config;
+
+    const fenceUntrusted = createUntrustedFence();
+    const byName = new Map<ToolName, ToolDefinition>(definitions.map((definition) => [definition.name, definition]));
+    const loadGuideReplies = standalonePrompt ? STANDALONE_LOAD_GUIDE_REPLIES : COMPOSED_LOAD_GUIDE_REPLIES;
+    // Widens as `load_guide` runs; getClientTools() re-reads it each round so a just-unlocked tool is
+    // advertised on the next turn.
+    let loadedGuides = new Set<ToolName>(config.loadedGuides ?? []);
+
+    /**
+     * Guard params against hallucinated references, converting the {@link UnknownReferenceError} into a
+     * tool error result the model can recover from. Returns `undefined` when everything resolves; any
+     * other error propagates.
+     */
+    const guardReferences = (definition: ToolDefinition, params: Record<string, any>): ClientToolResult | undefined => {
+        try {
+            assertReferencesResolve(params, references, definition.freeTextParams);
+        } catch (error) {
+            if (error instanceof UnknownReferenceError) {
+                return errorResult(unknownReferenceMessage(error.reference));
+            }
+            throw error;
+        }
+    };
+
+    /**
+     * Run the tool's own {@link ToolDefinition.checkParams}, converting a {@link ToolInputError} into a tool
+     * error result the model can act on. Returns `undefined` when the params pass; any other error propagates.
+     */
+    const guardParams = (definition: ToolDefinition, params: Record<string, any>): ClientToolResult | undefined => {
+        try {
+            definition.checkParams?.(params);
+        } catch (error) {
+            if (error instanceof ToolInputError) {
+                return errorResult(error.message);
+            }
+            throw error;
+        }
+    };
+
+    const runHandler = async (
+        definition: ToolDefinition,
+        params: Record<string, any>,
+        options?: ExecuteOptions
+    ): Promise<{ ok: true; payload: string } | { ok: false; error: ClientToolResult }> => {
+        const handler = handlers[definition.name];
+        if (!handler) {
+            onTrace?.(new Error(`No handler registered for tool "${definition.name}".`));
+            // Named for the trace, not for the model: it knows which tool it just called, and a call
+            // name in a result is a call name it can quote at the user.
+            return { ok: false, error: errorResult('That tool is not available here.') };
+        }
+        // A handler that outlived its chain has nowhere to put a chip or image; the turn it belonged to is
+        // gone. Checked at call time (not up front) since a handler can call `showImage` mid-run, before
+        // the chain it started in aborts.
+        const showImage = options?.showImage
+            ? (image: ToolImage) => {
+                  if (!options.signal?.aborted) {
+                      options.showImage?.(image);
+                  }
+              }
+            : undefined;
+        try {
+            const result = await handler(params, { references, showImage });
+            const payload = definition.serializeForLumo(result, references);
+            if (!options?.signal?.aborted) {
+                onChip?.({ tool: definition.name, summary: definition.summarizeChip(params, result), payload });
+            }
+            return { ok: true, payload };
+        } catch (error: any) {
+            if (error instanceof UnknownReferenceError) {
+                return { ok: false, error: errorResult(unknownReferenceMessage(error.reference)) };
+            }
+            // The model chose a bad param and the handler said how to fix it — pass that through, or the
+            // model only learns the call failed and re-issues it unchanged.
+            if (error instanceof ToolInputError) {
+                return { ok: false, error: errorResult(error.message) };
+            }
+            onTrace?.(error);
+            return { ok: false, error: errorResult('That tool call failed. Try a different approach.') };
+        }
+    };
+
+    const runLoadGuide = (args: Record<string, any>): ClientToolResult => {
+        const target = args.guide as ToolName;
+        const targetDefinition = byName.get(target);
+        // An invented name is an error in both modes; a polite "no guide" would tell the model the tool exists.
+        if (!targetDefinition) {
+            return errorResult('There is no tool by that name.');
+        }
+        if (!targetDefinition.guide) {
+            return loadGuideReplies.noGuide(target);
+        }
+        if (loadedGuides.has(target)) {
+            return loadGuideReplies.alreadyLoaded(target);
+        }
+
+        const guide = resolveGuide(targetDefinition);
+        if (!guide) {
+            // Composed mode gates the tool on its guide, so an empty body still unblocks it. Standalone
+            // mode gates nothing, and a guide only counts as loaded once a body went out.
+            if (!standalonePrompt) {
+                loadedGuides.add(target);
+            }
+            return loadGuideReplies.noBody(target);
+        }
+        loadedGuides.add(target);
+        const loadGuide = byName.get(loadGuideToolName);
+        onChip?.({
+            tool: loadGuideToolName,
+            summary: loadGuide?.summarizeChip(args, undefined as never) ?? { label: `Loaded guide for ${target}` },
+            payload: guide,
+        });
+        return loadGuideReplies.loaded(target, guide);
+    };
+
+    /**
+     * Everything after the user approves, kept in one function so the confirm tile is settled on a
+     * single outcome no matter which of its exits the change takes.
+     */
+    const applyConfirmed = async (
+        definition: ToolDefinition,
+        proposedParams: Record<string, any>,
+        approvedParams: Record<string, any>,
+        options?: ExecuteOptions
+    ): Promise<ClientToolResult> => {
+        const approvedError = guardReferences(definition, approvedParams) ?? guardParams(definition, approvedParams);
+        if (approvedError) {
+            return approvedError;
+        }
+        const applied = await runHandler(definition, approvedParams, options);
+        if (!applied.ok) {
+            return applied.error;
+        }
+        return okResult(
+            [
+                `Applied ${definition.name} successfully.`,
+                // A create_* tool serialises the new entity's reference here so the model can chain a
+                // follow-up without a re-read; other mutations serialise to ''.
+                applied.payload,
+                describeApplied(proposedParams, approvedParams),
+            ]
+                .filter(Boolean)
+                .join(' ')
+        );
+    };
+
+    const executeOne = async (call: PendingClientToolCall, options?: ExecuteOptions): Promise<ClientToolResult> => {
+        const definition = byName.get(call.name);
+        if (!definition) {
+            return errorResult('Unknown tool. Use one of the provided tools.');
+        }
+
+        const validation = validateToolArgs(definition.paramsSchema, parseArgs(call.arguments));
+        if (!validation.ok) {
+            return errorResult(validation.error);
+        }
+        const args = validation.value;
+
+        const argsError = guardReferences(definition, args) ?? guardParams(definition, args);
+        if (argsError) {
+            return argsError;
+        }
+
+        if (definition.name === loadGuideToolName) {
+            return runLoadGuide(args);
+        }
+
+        if (definition.kind === 'mutation') {
+            if (!confirm) {
+                onTrace?.(new Error(`Mutation "${definition.name}" called but no confirm controller is configured.`));
+                return errorResult('That tool is not available here.');
+            }
+            const action: ActionRequest = { type: definition.name, ...args };
+            const decision = await confirm.requestConfirmation(action, collectLabels(action, references));
+            if (decision.action === 'cancel') {
+                return okResult('The user declined that change. Suggest an alternative or ask what they want instead.');
+            }
+            // Unconditional: `guardReferences` and `guardParams` re-throw any error they do not convert,
+            // and a tile left in `APPLYING` has no other way out.
+            try {
+                const result = await applyConfirmed(definition, args, decision.params, options);
+                confirm.reportOutcome(result.is_error ? ConfirmOutcome.FAILED : ConfirmOutcome.APPLIED);
+                return result;
+            } catch (error) {
+                confirm.reportOutcome(ConfirmOutcome.FAILED);
+                throw error;
+            }
+        }
+
+        const read = await runHandler(definition, args, options);
+        return read.ok ? okResult(fenceUntrusted(read.payload)) : read.error;
+    };
+
+    return {
+        getClientTools: async (): Promise<ChatCompletionsFunctionTool[]> =>
+            buildToolDescriptors(definitions, loadedGuides, { advertiseAll: standalonePrompt }),
+        getLoadedGuides: () => [...loadedGuides],
+        setLoadedGuides: (guides) => {
+            loadedGuides = new Set(guides);
+        },
+        canExecute: (name) => byName.has(name),
+        normalizeCalls: normalizeName
+            ? (calls) => calls.map((call) => ({ ...call, name: normalizeName(call.name) }))
+            : (calls) => calls,
+        // Sequential, not parallel: a mutation must clear its confirm card before the next call, and the
+        // transport zips results to calls by index. A batch keeps walking after its chain is abandoned —
+        // the abort is only observed once the parked call resolves — so re-check the signal every round.
+        execute: async (calls, options) => {
+            const signal = options?.signal;
+            const results: ClientToolResult[] = [];
+            for (const call of calls) {
+                results.push(
+                    signal?.aborted ? errorResult('The user cancelled that.') : await executeOne(call, options)
+                );
+            }
+            return results;
+        },
+    };
+};

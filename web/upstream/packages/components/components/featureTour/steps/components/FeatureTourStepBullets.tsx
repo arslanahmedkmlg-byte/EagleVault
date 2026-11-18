@@ -1,0 +1,20 @@
+import type { FeatureTourStepId } from '@proton/account/featuresTour/interface';
+
+import StepDot from '../../../stepDot/StepDot';
+import StepDots from '../../../stepDots/StepDots';
+import type { FeatureTourStep } from '../../interface';
+
+interface FeatureTourStepBulletProps {
+    steps: FeatureTourStep[];
+    onClick: (stepIdx: FeatureTourStepId) => void;
+}
+
+const FeatureTourStepBullets = ({ steps, onClick }: FeatureTourStepBulletProps) => (
+    <StepDots ulClassName="m-0" className="text-center">
+        {steps.map(({ id, isActive }) => (
+            <StepDot key={id} active={isActive} data-testid={`step-bullet-${id}`} onClick={() => onClick(id)} />
+        ))}
+    </StepDots>
+);
+
+export default FeatureTourStepBullets;

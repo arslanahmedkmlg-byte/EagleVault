@@ -5,10 +5,12 @@ A Proton Pass-derived password manager for **Android and Web**, targeting a self
 EagleVault is developed in **one public repository**. Android, Web, backend compatibility, shared contracts, documentation and tests live together.
 
 ## Repository layout
-- android/ — Android client integration.
-- web/ — Web client integration.
-- backend/ — backend compatibility and deployment work.
-- shared/ — domain, API and crypto-boundary contracts.
+- android/upstream/ — imported Proton Pass Android source snapshot.
+- web/upstream/ — imported Proton Pass Web application and shared workspace packages.
+- backend/vaultwarden/ — imported Vaultwarden source snapshot.
+- shared/proton-pass-common/ — imported Proton Pass shared Rust source.
+- shared/contracts/ — EagleVault domain, API and crypto-boundary contracts.
+- web/src/ — EagleVault Web adapter work.
 - docs/ — architecture, source audit, implementation status and upstream revisions.
 - tests/ — contract and cross-platform tests.
 - LICENSES/ — preserved upstream license texts and provenance notes.
@@ -21,7 +23,7 @@ EagleVault is developed in **one public repository**. Android, Web, backend comp
 - Validate crypto against cross-platform golden vectors before enabling writes.
 
 ## Licensing
-The root LICENSE is AGPL-3.0 for the combined project. Original upstream copyright notices and license terms remain applicable to upstream-derived code. See LICENSES/README.md. No Bitwarden commercial-module code may be copied into EagleVault.
+The root LICENSE is AGPL-3.0 for the combined project. Original upstream copyright notices and license terms remain applicable to upstream-derived code. See LICENSES/README.md and docs/UPSTREAM-IMPORTS.md. No Bitwarden commercial-module code may be copied into EagleVault.
 
 ## Status
-The repository currently contains initial architecture, source audit, contracts and licensing manifest. It does not yet contain the Proton applications or a working Vaultwarden adapter. See docs/IMPLEMENTATION-STATUS.md.
+The upstream source snapshots, initial contracts and standalone Web transport are present. The Web transport is not yet connected to Proton's auth, crypto or sync systems, and Android integration is not yet implemented. See docs/IMPLEMENTATION-STATUS.md.

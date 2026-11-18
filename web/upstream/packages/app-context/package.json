@@ -1,0 +1,59 @@
+{
+    "name": "@proton/app-context",
+    "description": "React contexts for the application runtime services (api, config, cache, notifications)",
+    "license": "GPL-3.0",
+    "sideEffects": false,
+    "type": "module",
+    "exports": {
+        "./apiContext": "./apiContext.ts",
+        "./cacheContext": "./cacheContext.ts",
+        "./configContext": "./configContext.ts",
+        "./notifications/constants": "./notifications/constants.ts",
+        "./notifications/interfaces": "./notifications/interfaces.ts",
+        "./notifications/manager": "./notifications/manager.tsx",
+        "./notifications/notificationsContext": "./notifications/notificationsContext.ts",
+        "./testing/mockTelemetry": "./testing/mockTelemetry.ts",
+        "./testing/mockUseApi": "./testing/mockUseApi.ts",
+        "./testing/mockUseConfig": "./testing/mockUseConfig.ts",
+        "./testing/mockUseNotifications": "./testing/mockUseNotifications.ts",
+        "./testing/vitest/mockTelemetry": "./testing/vitest/mockTelemetry.ts",
+        "./testing/vitest/mockUseApi": "./testing/vitest/mockUseApi.ts",
+        "./testing/vitest/mockUseConfig": "./testing/vitest/mockUseConfig.ts",
+        "./testing/vitest/mockUseNotifications": "./testing/vitest/mockUseNotifications.ts",
+        "./useApi": "./useApi.ts",
+        "./useCache": "./useCache.ts",
+        "./useConfig": "./useConfig.ts",
+        "./useNotifications": "./useNotifications.ts",
+        "./useSilentApi": "./useSilentApi.ts"
+    },
+    "scripts": {
+        "check:types": "tsc --checkers 1",
+        "lint": "oxlint --quiet",
+        "test": "vitest",
+        "test:ci": "pnpm run test --run",
+        "test:watch": "pnpm run test --watch"
+    },
+    "dependencies": {
+        "@proton/icons": "workspace:^",
+        "@proton/shared": "workspace:^",
+        "dompurify": "catalog:",
+        "react": "catalog:"
+    },
+    "devDependencies": {
+        "@proton/oxlint-config": "workspace:^",
+        "@proton/utils": "workspace:^",
+        "@proton/vitest-config": "workspace:^",
+        "@testing-library/dom": "catalog:",
+        "@testing-library/react": "catalog:",
+        "@types/node": "catalog:",
+        "@types/react": "catalog:",
+        "@types/webpack-env": "catalog:",
+        "@typescript/native": "catalog:",
+        "jsdom": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
+        "react-dom": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    }
+}

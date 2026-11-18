@@ -1,0 +1,190 @@
+import type { ConnectionCloseReason } from '@proton/docs-proto/ConnectionCloseReason/ConnectionCloseReason'
+import type { DocumentUpdate } from '@proton/docs-proto/Generated/DocumentUpdate'
+import { BasePropertiesState } from '@proton/docs-shared/State/BasePropertiesState'
+import type { NodeMeta, PublicNodeMeta } from '@proton/docs-shared/BasicTypes'
+import type { BroadcastSource } from '@proton/docs-shared/Bridge/BroadcastSource'
+import type { DecryptedNode } from '@proton/docs-shared/DecryptedNode'
+import type { DocumentRole } from '@proton/docs-shared/Doc/DocumentRole'
+import type { RtsMessagePayload } from '@proton/docs-shared/Doc/RtsMessagePayload'
+import type { DocTrashState } from '@proton/docs-shared/DocTrashEvent'
+import type { DocumentMetaInterface } from '@proton/docs-shared/DocumentMetaInterface'
+import type { DecryptedMessage } from '@proton/docs-shared/Realtime/DecryptedMessage'
+import type { DecryptedCommit } from '../Models/DecryptedCommit'
+import type { DocumentEntitlements, PublicDocumentEntitlements } from '../Types/DocumentEntitlements'
+import type { SessionKey } from '@protontech/crypto'
+
+export type DocumentEvent =
+  | {
+      name: 'RealtimeConnectionClosed'
+      payload: ConnectionCloseReason
+    }
+  | {
+      name: 'RealtimeFailedToConnect'
+      payload: undefined
+    }
+  | {
+      name: 'RealtimeAttemptingToSendUpdateThatIsTooLarge'
+      payload: undefined
+    }
+  | {
+      name: 'RealtimeReceivedDocumentUpdate'
+      payload: DecryptedMessage
+    }
+  | {
+      name: 'RealtimeReceivedEverythingFromRTS'
+      payload: undefined
+    }
+  | {
+      name: 'RealtimeRequestingClientToBroadcastItsState'
+      payload: undefined
+    }
+  | {
+      name: 'RealtimeReceivedOtherClientPresenceState'
+      payload: Uint8Array<ArrayBuffer>
+    }
+  | {
+      name: 'EditorRequestsPropagationOfUpdate'
+      payload: {
+        message: RtsMessagePayload
+        debugSource: BroadcastSource
+      }
+    }
+  | {
+      name: 'CommitInitialConversionContent'
+      payload: DocumentUpdate
+    }
+  | {
+      name: 'DriveFileConversionToDocBegan'
+      payload: undefined
+    }
+  | {
+      name: 'DriveFileConversionToDocSucceeded'
+      payload: undefined
+    }
+  | {
+      name: 'DebugMenuRequestingCommitWithRTS'
+      payload: DocumentEntitlements
+    }
+  | {
+      name: 'EditorIsReadyToBeShown'
+      payload: undefined
+    }
+  | {
+      name: 'ImportUpdateSuccessful'
+      payload: {
+        uuid: string
+      }
+    }
+
+export interface DocumentStateValues {
+  documentName: string
+  currentCommitId: string | undefined
+  userRole: DocumentRole
+  documentTrashState: DocTrashState
+  baseCommit: DecryptedCommit | undefined
+  documentMeta: DocumentMetaInterface
+  decryptedNode: DecryptedNode
+  entitlements: DocumentEntitlements
+
+  currentDocumentEmailDocTitleEnabled: boolean
+
+  /** true when the editor is ready to receive function invocations */
+  editorReady: boolean
+  /**
+   * true when the editor has been configured with the correct initial config, set as permissions and mode.
+   * This must necessarily happen after editorReady, since first we need the editor to tell us it is ready to
+   * receive invocations. Then we invoke a initialize-editor function.
+   */
+  editorInitialized: boolean
+  editorHasRenderingIssue: boolean
+
+  /** Public documents may not support realtime depending on feature configuration */
+  realtimeEnabled: boolean
+  /** Is set to true after the connection connects AND the server informs us its ready to receive updates */
+  realtimeReadyToBroadcast: boolean
+  /** Is set to true if we are unable to form a connection with the RTS server in a reasonable time */
+  realtimeConnectionTimedOut: boolean
+  realtimeStatus: 'connected' | 'connecting' | 'disconnected'
+  realtimeIsExperiencingErroredSync: boolean
+  realtimeIsLockedDueToSizeContraint: boolean
+  realtimeIsParticipantLimitReached: boolean
+  realtimeIsLockedDueToSquashError: boolean
+  realtimeConnectionToken: string | undefined
+
+  realtimeShouldBeShownInReadonlyMode: boolean
+}
+
+const DefaultValues: Pick<
+  DocumentStateValues,
+  | 'documentName'
+  | 'currentCommitId'
+  | 'baseCommit'
+  | 'editorReady'
+  | 'editorInitialized'
+  | 'editorHasRenderingIssue'
+  | 'realtimeEnabled'
+  | 'realtimeReadyToBroadcast'
+  | 'realtimeConnectionTimedOut'
+  | 'realtimeStatus'
+  | 'realtimeIsExperiencingErroredSync'
+  | 'realtimeIsLockedDueToSizeContraint'
+  | 'realtimeIsParticipantLimitReached'
+  | 'realtimeIsLockedDueToSquashError'
+  | 'realtimeShouldBeShownInReadonlyMode'
+> = {
+  documentName: '',
+  currentCommitId: undefined,
+  baseCommit: undefined,
+
+  editorReady: false,
+  editorInitialized: false,
+  editorHasRenderingIssue: false,
+  realtimeEnabled: true,
+  realtimeConnectionTimedOut: false,
+  realtimeReadyToBroadcast: false,
+  realtimeStatus: 'disconnected',
+  realtimeIsExperiencingErroredSync: false,
+  realtimeIsLockedDueToSizeContraint: false,
+  realtimeIsParticipantLimitReached: false,
+  realtimeIsLockedDueToSquashError: false,
+  realtimeShouldBeShownInReadonlyMode: false,
+}
+
+export function isDocumentState(state: DocumentState | PublicDocumentState): state is DocumentState {
+  return state instanceof DocumentState
+}
+
+/**
+ * Manages the state of a fully resolved document (has nodeMeta, documentMeta, etc)
+ */
+export class DocumentState extends BasePropertiesState<DocumentStateValues, DocumentEvent> {
+  static readonly defaults: typeof DefaultValues = DefaultValues
+
+  get nodeMeta(): NodeMeta {
+    return this.getProperty('entitlements').nodeMeta
+  }
+
+  get documentContentKey(): SessionKey {
+    return this.getProperty('entitlements').keys.documentContentKey
+  }
+}
+
+/**
+ * Same as DocumentState but entitlements are of type PublicDocumentEntitlements
+ */
+export class PublicDocumentState extends BasePropertiesState<
+  Omit<DocumentStateValues, 'entitlements'> & {
+    entitlements: PublicDocumentEntitlements
+  },
+  DocumentEvent
+> {
+  static readonly defaults: typeof DefaultValues = DefaultValues
+
+  get nodeMeta(): PublicNodeMeta {
+    return this.getProperty('entitlements').nodeMeta
+  }
+
+  get documentContentKey(): SessionKey {
+    return this.getProperty('entitlements').keys.documentContentKey
+  }
+}

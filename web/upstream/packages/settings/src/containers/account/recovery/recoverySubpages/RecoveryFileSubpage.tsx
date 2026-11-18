@@ -1,0 +1,113 @@
+import { c } from 'ttag';
+
+import { useUpdateRecoveryFile } from '@proton/account-recovery/recovery/useUpdateRecoveryFile';
+import { selectRecoveryFileData } from '@proton/account/recovery/recoveryFile';
+import { Button } from '@proton/atoms/Button/Button';
+import { DashboardCard, DashboardCardContent, DashboardCardDivider } from '@proton/atoms/DashboardCard/DashboardCard';
+import { DashboardGrid } from '@proton/atoms/DashboardGrid/DashboardGrid';
+import { Href } from '@proton/atoms/Href/Href';
+import SettingsDescription from '@proton/components/containers/account/SettingsDescription';
+import ExportRecoveryFileButton from '@proton/components/containers/recovery/ExportRecoveryFileButton';
+import { useTheme } from '@proton/components/containers/themes/ThemeProvider';
+import { IcArrowDownLine } from '@proton/icons/icons/IcArrowDownLine';
+import { IcExclamationCircleFilled } from '@proton/icons/icons/IcExclamationCircleFilled';
+import { IcTrashCross } from '@proton/icons/icons/IcTrashCross';
+import { useSelector } from '@proton/redux-shared-store/sharedProvider';
+import { RECOVERY_FILE_FILE_NAME } from '@proton/shared/lib/constants';
+import { getKnowledgeBaseUrl } from '@proton/shared/lib/helpers/url';
+
+import darkIllustration from './assets/recovery-file-dark.svg';
+import illustration from './assets/recovery-file.svg';
+import PasswordResetOptionRequiredWarning from './shared/PasswordResetOptionRequiredWarning';
+import RecoveryWarning from './shared/RecoveryWarning';
+
+const RecoveryFileSubpage = ({ emailSubpagePath }: { emailSubpagePath: string }) => {
+    const theme = useTheme();
+    const isDarkTheme = theme.information.dark;
+    const recoveryFileData = useSelector(selectRecoveryFileData);
+    const updateRecoveryFile = useUpdateRecoveryFile(recoveryFileData);
+
+    if (!recoveryFileData.isRecoveryFileAvailable) {
+        return null;
+    }
+
+    const isRecoveryFileSentinelConflict =
+        recoveryFileData.isRecoveryFileAvailable &&
+        !recoveryFileData.hasOutdatedRecoveryFile &&
+        recoveryFileData.recoverySecrets.length > 0;
+
+    return (
+        <>
+            {updateRecoveryFile.el}
+            <DashboardGrid>
+                <SettingsDescription
+                    right={
+                        <img
+                            src={isDarkTheme ? darkIllustration : illustration}
+                            alt=""
+                            className="shrink-0 hidden md:block"
+                            width={80}
+                            height={80}
+                        />
+                    }
+                >
+                    <SettingsDescription.Item>
+                        {c('Info')
+                            .t`Your recovery file will restore access to emails, contacts, files, passwords, and any other encrypted data on your account after a password reset.`}
+                    </SettingsDescription.Item>
+                    <SettingsDescription.Item>
+                        {c('Info')
+                            .t`You don’t need to open or read the file—just download it and store it somewhere safe.`}{' '}
+                        <Href key="learn" href={getKnowledgeBaseUrl('/recover-encrypted-messages-files')}>
+                            {c('Link').t`Learn more`}
+                        </Href>
+                    </SettingsDescription.Item>
+                </SettingsDescription>
+                <DashboardCard>
+                    <PasswordResetOptionRequiredWarning emailSubpagePath={emailSubpagePath} />
+                    <DashboardCardContent>
+                        <h3 className="flex items-center gap-2 mb-0 text-rg text-semibold mb-2">
+                            {c('Title').t`Your recovery file`}
+                        </h3>
+                        <span className="block mt-0 mb-2 text-ellipsis">{RECOVERY_FILE_FILE_NAME}</span>
+                        <ExportRecoveryFileButton className="block" color="norm">
+                            <IcArrowDownLine size={4} />
+                            {recoveryFileData.hasOutdatedRecoveryFile
+                                ? c('Action').t`Download updated file`
+                                : c('Action').t`Download`}
+                        </ExportRecoveryFileButton>
+                        {recoveryFileData.canRevokeRecoveryFiles && (
+                            <div className="fade-in">
+                                <DashboardCardDivider />
+                                <Button
+                                    color="danger"
+                                    shape="outline"
+                                    onClick={() => updateRecoveryFile.voidFiles()}
+                                    className="inline-flex gap-2 items-center"
+                                >
+                                    <IcTrashCross className="shrink-0 color-danger" />
+                                    {c('Action').t`Void all recovery files`}
+                                </Button>
+                            </div>
+                        )}
+                        {recoveryFileData.hasOutdatedRecoveryFile && (
+                            <div className="fade-in">
+                                <DashboardCardDivider />
+                                <p className="flex flex-nowrap gap-2 items-center m-0">
+                                    <IcExclamationCircleFilled className="shrink-0 color-danger" />
+                                    <span className="flex-1">{c('Warning')
+                                        .t`Your recovery file is outdated. It can't recover new data if you reset your password again.`}</span>
+                                </p>
+                            </div>
+                        )}
+                        {!isRecoveryFileSentinelConflict && !recoveryFileData.hasOutdatedRecoveryFile && (
+                            <RecoveryWarning />
+                        )}
+                    </DashboardCardContent>
+                </DashboardCard>
+            </DashboardGrid>
+        </>
+    );
+};
+
+export default RecoveryFileSubpage;

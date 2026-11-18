@@ -1,0 +1,28 @@
+[package]
+name = "proton-authenticator-mobile"
+edition.workspace = true
+version.workspace = true
+
+# Flags for cargo-release
+[package.metadata.release]
+pre-release-replacements = [
+    # Yes, we are relying on the number of whitespaces
+    {file="android/lib/build.gradle.kts", search="    version = .*", replace="    version = \"{{version}}\""}
+]
+
+
+[lib]
+doctest = false
+crate-type = ["cdylib", "staticlib"]
+name = "proton_authenticator_common_mobile"
+
+[dependencies]
+proton-authenticator = { path = "../proton-authenticator", features = ["qr", "uniffi"] }
+proton-pass-totp = { path = "../proton-pass-totp", features = ["uniffi"] }
+proton-pass-derive = { path = "../proton-pass-derive" }
+
+tokio.workspace = true
+uniffi.workspace = true
+
+jiff = "0.2.18"
+

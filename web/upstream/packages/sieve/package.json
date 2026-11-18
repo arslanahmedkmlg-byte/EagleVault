@@ -1,0 +1,36 @@
+{
+    "name": "@proton/sieve",
+    "description": "Proton sieve",
+    "license": "GPL-3.0",
+    "author": "ProtonMail",
+    "sideEffects": false,
+    "exports": {
+        "./filterModel": "./src/filterModel.ts",
+        "./fromSieveTree": "./src/fromSieve/fromSieveTree.ts",
+        "./toSieveTree": "./src/toSieve/toSieveTree.ts",
+        "./types": "./src/interface.ts"
+    },
+    "scripts": {
+        "check:types": "tsc --checkers 1",
+        "lint": "oxlint --quiet",
+        "pretty": "oxfmt --write \"src/**/*.ts\" \"fixtures/**/*.ts\"",
+        "test": "vitest",
+        "test:ci": "pnpm run test --run"
+    },
+    "dependencies": {
+        "@proton/utils": "workspace:^",
+        "lodash": "catalog:"
+    },
+    "devDependencies": {
+        "@proton/oxlint-config": "workspace:^",
+        "@proton/vitest-config": "workspace:^",
+        "@types/lodash": "catalog:",
+        "@types/node": "catalog:",
+        "@types/webpack-env": "catalog:",
+        "@typescript/native": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    }
+}

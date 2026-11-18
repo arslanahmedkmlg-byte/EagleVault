@@ -1,0 +1,327 @@
+import type { ReactNode } from 'react';
+import { Route, Switch } from 'react-router-dom';
+
+import { c } from 'ttag';
+
+import VerifyPasswordButton from '@proton/account-recovery/passwordReminder/VerifyPasswordButton';
+import NonPrivateRecoverySection from '@proton/account-recovery/recovery/NonPrivateRecoveySection';
+import SignInRestrictionSection from '@proton/account-security/signInRestriction/SignInRestrictionSection';
+import AuthDevicesSettings from '@proton/account-security/sso/AuthDevicesSettings';
+import EasySwitchSettingsArea from '@proton/activation/src/components/SettingsArea/SettingsArea';
+import { ThirdPartySection } from '@proton/calendar-video-conferencing/thirdParty/ThirdPartySection';
+import SettingsMaintenanceLayoutWrapper from '@proton/components/components/maintenanceLayout/SettingsMaintenanceLayoutWrapper';
+import AccessibilitySection from '@proton/components/containers/account/AccessibilitySection';
+import DeleteSection from '@proton/components/containers/account/DeleteSection';
+import EmailSubscriptionSection from '@proton/components/containers/account/EmailSubscriptionSection';
+import FamilyPlanSection from '@proton/components/containers/account/FamilyPlanSection';
+import PasswordsSection from '@proton/components/containers/account/PasswordsSection';
+import SettingsPageTitle from '@proton/components/containers/account/SettingsPageTitle';
+import SettingsSectionWide from '@proton/components/containers/account/SettingsSectionWide';
+import TwoFactorSection from '@proton/components/containers/account/TwoFactorSection';
+import UsernameSection from '@proton/components/containers/account/UsernameSection';
+import GroupMembershipSection from '@proton/components/containers/account/groups/GroupMembershipSection';
+import CredentialLeakSection from '@proton/components/containers/credentialLeak/CredentialLeakSection';
+import LanguageAndTimeSection from '@proton/components/containers/general/LanguageAndTimeSection';
+import PrivateMainArea from '@proton/components/containers/layout/PrivateMainArea';
+import PrivateMainSettingsArea from '@proton/components/containers/layout/PrivateMainSettingsArea';
+import { getIsSectionAvailable, getSectionPath } from '@proton/components/containers/layout/helper';
+import { SettingsCardMaxWidth, SettingsLayoutVariant } from '@proton/components/containers/layout/interface';
+import LogsSection from '@proton/components/containers/logs/LogsSection';
+import GiftCodeSection from '@proton/components/containers/payments/GiftCodeSection';
+import SubscriptionsSection from '@proton/components/containers/payments/SubscriptionsSection';
+import DashboardTelemetry from '@proton/components/containers/payments/subscription/DashboardTelemetry';
+import { UpsellModalTelemetryProvider } from '@proton/components/containers/payments/subscription/UpsellModalTelemetryProvider';
+import DashboardComparePlansCTA from '@proton/components/containers/payments/subscription/YourPlanSectionV2/DashboardComparePlansCTA';
+import YourPlanSectionV2 from '@proton/components/containers/payments/subscription/YourPlanSectionV2/YourPlanSectionV2';
+import { YourPlanUpsellsSectionV2 } from '@proton/components/containers/payments/subscription/YourPlanSectionV2/YourPlanUpsellsSectionV2';
+import YourStorageSection from '@proton/components/containers/payments/subscription/YourStorageSection';
+import AssistantToggle from '@proton/components/containers/payments/subscription/assistant/AssistantToggle';
+import { CancelSubscriptionSection } from '@proton/components/containers/payments/subscription/cancelSubscription/CancelSubscriptionSection';
+import CancelSubscriptionViaSupportSection from '@proton/components/containers/payments/subscription/cancelSubscriptionViaSupport/CancelSubscriptionViaSupportSection';
+import PrivacySection from '@proton/components/containers/privacy/PrivacySection';
+import SignInWithAnotherDeviceSettings from '@proton/components/containers/recovery/SignInWithAnotherDeviceSettings';
+import { ReferralInvitesContextProvider } from '@proton/components/containers/referral/ReferralInvitesContext';
+import { BusinessReferralSection } from '@proton/components/containers/referral/business/BusinessReferralSection';
+import ReferralPageTelemetry from '@proton/components/containers/referral/components/ReferralPageTelemetry';
+import { InviteSection } from '@proton/components/containers/referral/invite/InviteSection';
+import { RewardSection } from '@proton/components/containers/referral/rewards/RewardSection';
+import { SentinelSection } from '@proton/components/containers/sentinel/SentinelSection';
+import SessionsSection from '@proton/components/containers/sessions/SessionsSection';
+import ThemesSection from '@proton/components/containers/themes/ThemesSection';
+import { VpnAlsoInYourPlanSection } from '@proton/components/containers/vpn/VpnAlsoInYourPlanSection/VpnAlsoInYourPlanSection';
+import { VpnBlogSection } from '@proton/components/containers/vpn/VpnBlogSection/VpnBlogSection';
+import { EmergencyContactSection } from '@proton/delegated-access/emergencyContact/EmergencyContactSection';
+import { RecoveryContactSection } from '@proton/delegated-access/recoveryContact/RecoveryContactSection';
+import InvoicesSection from '@proton/payments-ui/containers/invoices/InvoicesSection';
+import CreditsSection from '@proton/payments-ui/containers/payments/CreditsSection';
+import PlansSection from '@proton/payments-ui/containers/payments/PlansSection';
+import PaymentMethodsSection from '@proton/payments-ui/containers/payments/methods/PaymentMethodsSection';
+import { PaymentsContextProvider } from '@proton/payments-ui/ui/context/PaymentContext';
+import { AutomaticSubscriptionModal } from '@proton/payments-ui/ui/subscriptions/AutomaticSubscriptionModal';
+import type { APP_NAMES } from '@proton/shared/lib/constants';
+import { VPNDownloadAndInfoSection } from '@proton/vpn/components/VPNDownloadSection';
+
+import { DashboardLinkRedirect } from './dashboard/DashboardLinkRedirect';
+import AccountDashboard from './dashboard/dashboard';
+import RecoverySettingsRouter from './recovery/RecoverySettingsRouter';
+import type { getAccountAppRoutes } from './routes';
+import YourPlanSection from './yourPlan/YourPlanSection';
+
+const AccountSettingsRouter = ({
+    redirect,
+    path,
+    accountAppRoutes,
+    app,
+}: {
+    redirect: ReactNode;
+    path: string;
+    accountAppRoutes: ReturnType<typeof getAccountAppRoutes>;
+    app: APP_NAMES;
+}) => {
+    const {
+        routes: {
+            vpnDashboardV2,
+            subscription,
+            dashboard,
+            upgrade,
+            easySwitch,
+            referral,
+            referralBusiness,
+            recovery,
+            security,
+            password,
+            language,
+            appearance,
+            groupMembership,
+        },
+    } = accountAppRoutes;
+
+    if (!accountAppRoutes.available) {
+        return <>{redirect}</>;
+    }
+
+    return (
+        <Switch>
+            {getIsSectionAvailable(vpnDashboardV2) && (
+                <Route path={getSectionPath(path, vpnDashboardV2)}>
+                    <DashboardTelemetry app={app} />
+                    <AutomaticSubscriptionModal />
+                    <UpsellModalTelemetryProvider context="account-home">
+                        <PrivateMainSettingsArea
+                            config={vpnDashboardV2}
+                            variant={SettingsLayoutVariant.Card}
+                            maxWidth={SettingsCardMaxWidth.Wide}
+                        >
+                            <YourPlanSectionV2 app={app} />
+                            <PaymentsContextProvider>
+                                <YourPlanUpsellsSectionV2 app={app} />
+                            </PaymentsContextProvider>
+                            <VPNDownloadAndInfoSection app={app} />
+                            <VpnAlsoInYourPlanSection app={app} />
+                            <VpnBlogSection />
+                        </PrivateMainSettingsArea>
+                    </UpsellModalTelemetryProvider>
+                </Route>
+            )}
+            {/* VPN's new dashboard lives at /dashboardV2, but old /dashboard links (like "Pay invoice") still come here. */}
+            {/* Send them to the right page once the user's plan has loaded. */}
+            {getIsSectionAvailable(vpnDashboardV2) && (
+                <Route path={getSectionPath(path, dashboard)}>
+                    <DashboardLinkRedirect path={path} subscription={subscription}>
+                        {redirect}
+                    </DashboardLinkRedirect>
+                </Route>
+            )}
+            {getIsSectionAvailable(dashboard) && dashboard.id === 'dashboardV2' && (
+                <Route path={getSectionPath(path, dashboard)}>
+                    <DashboardLinkRedirect path={path} subscription={subscription}>
+                        <DashboardTelemetry app={app} />
+                        <AutomaticSubscriptionModal />
+                        <PaymentsContextProvider>
+                            <AccountDashboard app={app} config={dashboard} />
+                        </PaymentsContextProvider>
+                    </DashboardLinkRedirect>
+                </Route>
+            )}
+            {getIsSectionAvailable(subscription) && (
+                <Route path={getSectionPath(path, subscription)}>
+                    <AutomaticSubscriptionModal />
+                    <UpsellModalTelemetryProvider context="account-home">
+                        <PrivateMainSettingsArea
+                            config={subscription}
+                            variant={SettingsLayoutVariant.Card}
+                            maxWidth={SettingsCardMaxWidth.Wide}
+                        >
+                            <YourPlanSectionV2
+                                app={app}
+                                editBillingCycle={true}
+                                cta={<DashboardComparePlansCTA app={app} />}
+                            />
+                            <AssistantToggle />
+                            <SubscriptionsSection />
+                            <PaymentMethodsSection app={app} />
+                            <CreditsSection app={app} />
+                            <GiftCodeSection />
+                            <InvoicesSection app={app} />
+                            <EmailSubscriptionSection toggleContainerClassName="gap-4" />
+                            <CancelSubscriptionSection app={app} />
+                            <CancelSubscriptionViaSupportSection />
+                        </PrivateMainSettingsArea>
+                    </UpsellModalTelemetryProvider>
+                </Route>
+            )}
+            {getIsSectionAvailable(dashboard) && dashboard.id === 'dashboard' && (
+                <Route path={getSectionPath(path, dashboard)}>
+                    <DashboardTelemetry app={app} />
+                    <AutomaticSubscriptionModal />
+                    <PrivateMainSettingsArea config={dashboard}>
+                        <YourStorageSection app={app} />
+                        <YourPlanSection app={app} />
+                        <AssistantToggle />
+                        <SubscriptionsSection />
+                        <PaymentMethodsSection app={app} />
+                        <CreditsSection app={app} />
+                        <GiftCodeSection />
+                        <InvoicesSection app={app} />
+                        <EmailSubscriptionSection toggleContainerClassName="gap-4" />
+                        <CancelSubscriptionSection app={app} />
+                        <CancelSubscriptionViaSupportSection />
+                    </PrivateMainSettingsArea>
+                </Route>
+            )}
+            {getIsSectionAvailable(upgrade) && (
+                <Route path={getSectionPath(path, upgrade)}>
+                    <AutomaticSubscriptionModal />
+                    <PrivateMainArea>
+                        <div className="container-section-sticky">
+                            <div className="text-center flex">
+                                <SettingsSectionWide className="mx-auto">
+                                    <SettingsPageTitle className="my-14">{c('new_plans: title')
+                                        .t`Unlock premium features by upgrading`}</SettingsPageTitle>
+                                    <PlansSection app={app} />
+                                </SettingsSectionWide>
+                            </div>
+                        </div>
+                    </PrivateMainArea>
+                </Route>
+            )}
+            {getIsSectionAvailable(recovery) && (
+                <Route path={getSectionPath(path, recovery)}>
+                    <RecoverySettingsRouter app={app} recovery={recovery} path={path} />
+                </Route>
+            )}
+            {getIsSectionAvailable(password) && (
+                <Route path={getSectionPath(path, password)}>
+                    <PrivateMainSettingsArea
+                        config={password}
+                        variant={SettingsLayoutVariant.Card}
+                        maxWidth={SettingsCardMaxWidth.Narrow}
+                    >
+                        <UsernameSection app={app} />
+                        <PasswordsSection verifyPasswordButton={<VerifyPasswordButton />} />
+                        <TwoFactorSection />
+                        {/* The following two sections are for non-private users */}
+                        <NonPrivateRecoverySection />
+                        <SignInWithAnotherDeviceSettings />
+                        <PaymentsContextProvider>
+                            <EmergencyContactSection app={app} />
+                        </PaymentsContextProvider>
+                        <RecoveryContactSection app={app} />
+                        <FamilyPlanSection />
+                        {/* Those 3 sections are here for members of family plan that don't have access to the dashboard any more */}
+                        <PaymentMethodsSection app={app} />
+                        <CreditsSection app={app} />
+                        <InvoicesSection app={app} />
+                        <DeleteSection />
+                    </PrivateMainSettingsArea>
+                </Route>
+            )}
+            <Route path={getSectionPath(path, language)}>
+                <PrivateMainSettingsArea
+                    config={language}
+                    variant={SettingsLayoutVariant.Card}
+                    maxWidth={SettingsCardMaxWidth.Narrow}
+                >
+                    <LanguageAndTimeSection />
+                </PrivateMainSettingsArea>
+            </Route>
+            <Route path={getSectionPath(path, appearance)}>
+                <PrivateMainSettingsArea
+                    config={appearance}
+                    variant={SettingsLayoutVariant.Card}
+                    maxWidth={SettingsCardMaxWidth.Medium}
+                >
+                    <ThemesSection />
+                    <AccessibilitySection />
+                </PrivateMainSettingsArea>
+            </Route>
+            <Route path={getSectionPath(path, security)}>
+                <AutomaticSubscriptionModal />
+                <PrivateMainSettingsArea
+                    config={security}
+                    variant={SettingsLayoutVariant.Card}
+                    maxWidth={SettingsCardMaxWidth.Medium}
+                >
+                    <SentinelSection app={app} />
+                    <CredentialLeakSection />
+                    <SignInRestrictionSection />
+                    <AuthDevicesSettings />
+                    <SessionsSection />
+                    <LogsSection />
+                    <ThirdPartySection />
+                    <PrivacySection />
+                </PrivateMainSettingsArea>
+            </Route>
+            {getIsSectionAvailable(referral) && (
+                <Route exact path={getSectionPath(path, referral)}>
+                    <ReferralPageTelemetry />
+                    <ReferralInvitesContextProvider>
+                        <PrivateMainSettingsArea
+                            config={referral}
+                            variant={SettingsLayoutVariant.Card}
+                            maxWidth={SettingsCardMaxWidth.Medium}
+                        >
+                            <InviteSection />
+                            <RewardSection />
+                        </PrivateMainSettingsArea>
+                    </ReferralInvitesContextProvider>
+                </Route>
+            )}
+            {getIsSectionAvailable(referralBusiness) && (
+                <Route path={getSectionPath(path, referralBusiness)}>
+                    <ReferralPageTelemetry />
+                    <ReferralInvitesContextProvider>
+                        <PrivateMainSettingsArea
+                            config={referralBusiness}
+                            variant={SettingsLayoutVariant.Card}
+                            maxWidth={SettingsCardMaxWidth.Medium}
+                        >
+                            <BusinessReferralSection />
+                        </PrivateMainSettingsArea>
+                    </ReferralInvitesContextProvider>
+                </Route>
+            )}
+            {getIsSectionAvailable(easySwitch) && (
+                <Route path={getSectionPath(path, easySwitch)}>
+                    <SettingsMaintenanceLayoutWrapper config={easySwitch} maintenanceFlag="MaintenanceImporter">
+                        <EasySwitchSettingsArea config={easySwitch} app={app} />
+                    </SettingsMaintenanceLayoutWrapper>
+                </Route>
+            )}
+            {getIsSectionAvailable(groupMembership) && (
+                <Route path={getSectionPath(path, groupMembership)}>
+                    <PrivateMainSettingsArea
+                        config={groupMembership}
+                        variant={SettingsLayoutVariant.Card}
+                        maxWidth={SettingsCardMaxWidth.Narrow}
+                    >
+                        <GroupMembershipSection />
+                    </PrivateMainSettingsArea>
+                </Route>
+            )}
+            {redirect}
+        </Switch>
+    );
+};
+
+export default AccountSettingsRouter;

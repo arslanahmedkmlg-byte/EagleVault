@@ -1,0 +1,57 @@
+import { c } from 'ttag';
+
+import { organizationActions } from '@proton/account/organization';
+import { useOrganization } from '@proton/account/organization/hooks';
+import { useApi } from '@proton/app-context/useApi';
+import { useNotifications } from '@proton/app-context/useNotifications';
+import useLoading from '@proton/hooks/useLoading';
+import { IcDrawerDividers } from '@proton/icons/icons/IcDrawerDividers';
+import { useCategoriesData } from '@proton/mail/features/categoriesView/useCategoriesData';
+import { useDispatch } from '@proton/redux-shared-store/sharedProvider';
+import { updateOrganizationSettings } from '@proton/shared/lib/api/organization';
+import type { OrganizationSettings } from '@proton/shared/lib/interfaces/Organization';
+
+import { AccessToggle } from './AccessToggle';
+
+export const AccessToggleCategoryView = () => {
+    const api = useApi();
+    const dispatch = useDispatch();
+    const [organization] = useOrganization();
+    const { createNotification } = useNotifications();
+
+    const { canUseCategoryView } = useCategoriesData();
+
+    const [categoryLoading, withCategoryLoading] = useLoading();
+
+    const handleToggleCategoryView = async () => {
+        const organizationSettings = await api<OrganizationSettings>(
+            updateOrganizationSettings({
+                MailCategoryViewEnabled: !organization?.Settings.MailCategoryViewEnabled,
+            })
+        );
+        dispatch(organizationActions.updateOrganizationSettings({ value: organizationSettings }));
+
+        createNotification({ text: c('Success notification').t`Preferences updated` });
+    };
+
+    if (!canUseCategoryView) {
+        return null;
+    }
+
+    return (
+        <AccessToggle
+            id="category-toggle"
+            icon={<IcDrawerDividers className="color-weak" size={6} />}
+            title={c('Title').t`Email categories`}
+            checked={!!organization?.Settings.MailCategoryViewEnabled}
+            loading={categoryLoading}
+            onChange={() => withCategoryLoading(handleToggleCategoryView())}
+            className="mt-4"
+        >
+            <p className="m-0 text-sm">
+                {c('Info')
+                    .t`With email categories, important messages land in a primary inbox. Everything else is organized into categories.`}
+            </p>
+        </AccessToggle>
+    );
+};

@@ -1,0 +1,87 @@
+import { c } from 'ttag';
+
+import { usePlans } from '@proton/account/plans/hooks';
+import { Button } from '@proton/atoms/Button/Button';
+import { FREE_PLAN } from '@proton/payments/core/subscription/freePlans';
+import { getPlanName } from '@proton/payments/core/subscription/helpers';
+import type { Subscription } from '@proton/payments/core/subscription/interface';
+import { BRAND_NAME } from '@proton/shared/lib/constants';
+
+import ModalTwoContent from '../../../../../components/modalTwo/ModalContent';
+import ModalTwoFooter from '../../../../../components/modalTwo/ModalFooter';
+import ModalTwoHeader from '../../../../../components/modalTwo/ModalHeader';
+import { B2BStoryCards } from '../components/B2BStoryCards';
+import { B2CStoryCards } from '../components/B2CStoryCards';
+import { ComparisonTable } from '../components/ComparisonTable';
+import { getTemporaryNeedConfig } from '../config/temporaryNeedConfig';
+import { getPlanDisplayName } from '../helpers/getPlanDisplayName';
+import { useFeedbackFirstEligibility } from '../hooks/useFeedbackFirstEligibility';
+
+interface Props {
+    subscription: Subscription;
+    onKeepPlan: () => void;
+    onContinueCancelling: () => void;
+}
+
+export const TemporaryNeedContent = ({ subscription, onKeepPlan, onContinueCancelling }: Props) => {
+    const [plansResult] = usePlans();
+    const { hasB2BAccess, hasB2CAccess } = useFeedbackFirstEligibility(subscription);
+
+    const planName = getPlanName(subscription);
+    const plans = plansResult?.plans ?? [];
+    const freePlan = plansResult?.freePlan ?? FREE_PLAN;
+    const currentPlan = plans.find((p) => p.Name === planName);
+
+    if (!currentPlan || !planName) {
+        return null;
+    }
+
+    const planDisplayName = getPlanDisplayName(planName, currentPlan.Title);
+    const config = getTemporaryNeedConfig(currentPlan, freePlan);
+
+    if (!config) {
+        return null;
+    }
+
+    return (
+        <>
+            <ModalTwoHeader
+                title={c('Title').t`What changes if you cancel ${planDisplayName}`}
+                titleClassName="text-4xl"
+            />
+            <ModalTwoContent>
+                <p className="mb-12">{config.subtitle}</p>
+                <ComparisonTable
+                    leftHeader={config.currentPlanHeader}
+                    rightHeader={config.freePlanHeader}
+                    features={config.features}
+                />
+
+                {hasB2BAccess && (
+                    <>
+                        <p>{c('Info')
+                            .t`Your ${planDisplayName} plan doesn’t just keep your business data and communications safe. It supports your compliance objectives, makes your business stand out, and keeps your team connected.`}</p>
+                        <B2BStoryCards />
+                    </>
+                )}
+                {hasB2CAccess && (
+                    <>
+                        <p className="mt-12">
+                            {c('Paragraph')
+                                .t`${BRAND_NAME} is independently funded and operates without advertising. Below are examples of how this independence has been used in practice.`}
+                        </p>
+                        <B2CStoryCards />
+                    </>
+                )}
+            </ModalTwoContent>
+            <ModalTwoFooter className="flex justify-end gap-2">
+                <Button shape="outline" color="weak" onClick={onKeepPlan}>
+                    {c('Temporary need').t`Keep current plan`}
+                </Button>
+                <Button color="danger" onClick={onContinueCancelling}>
+                    {c('Temporary need').t`Continue cancelling`}
+                </Button>
+            </ModalTwoFooter>
+        </>
+    );
+};

@@ -1,0 +1,52 @@
+import type { Mock } from 'vitest';
+
+import { PLANS } from '@proton/payments/core/constants';
+import { getPlan } from '@proton/payments/core/subscription/helpers';
+import { APPS } from '@proton/shared/lib/constants';
+
+import { subscriptionBundlePro } from '../../../../testing/subscriptionData';
+import { getReminderPageConfig } from './reminderPageConfig';
+
+vi.mock('@proton/payments/core/subscription/helpers', async () => ({
+    __esModule: true,
+    ...(await vi.importActual('@proton/payments/core/subscription/helpers')),
+    getPlan: vi.fn(),
+}));
+
+const setMockPlan = (planName: PLANS) => {
+    (getPlan as Mock).mockReturnValue({
+        MaxAddresses: 5,
+        MaxCalendars: 1,
+        MaxDomains: 1,
+        MaxMembers: 1,
+        MaxSpace: 536870912000,
+        Name: planName,
+    });
+};
+
+describe('getReminderPageConfig', () => {
+    beforeEach(() => {
+        vi.resetAllMocks();
+    });
+
+    test.each([
+        [PLANS.MAIL, undefined],
+        [PLANS.BUNDLE, PLANS.MAIL],
+        [PLANS.FAMILY, undefined],
+        [PLANS.DUO, PLANS.BUNDLE],
+        [PLANS.VISIONARY, PLANS.FAMILY],
+        [PLANS.DRIVE, undefined],
+        [PLANS.MAIL_PRO, undefined],
+        [PLANS.MAIL_BUSINESS, PLANS.MAIL_PRO],
+        [PLANS.BUNDLE_PRO_2024, PLANS.MAIL_BUSINESS],
+        [PLANS.BUNDLE_PRO, PLANS.MAIL_BUSINESS],
+    ])(
+        'given app is Mail and plan name is %s, should return the correct upsell plan, if any',
+        (planName: PLANS, upsellPlanName: PLANS | undefined) => {
+            setMockPlan(planName);
+            const config = getReminderPageConfig({ app: APPS.PROTONMAIL, subscription: subscriptionBundlePro });
+
+            expect(config?.upsellPlan).toEqual(upsellPlanName);
+        }
+    );
+});

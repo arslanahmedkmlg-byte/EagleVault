@@ -1,0 +1,231 @@
+import type { DocLoaderInitializeOptions, DocLoaderInterface } from './DocLoaderInterface'
+import { AuthenticatedDocController } from '../../AuthenticatedDocController/AuthenticatedDocController'
+import { CommentController } from '../Comments/CommentController'
+import type { DocumentState } from '../../State/DocumentState'
+import { EditorController } from '../../EditorController/EditorController'
+import { EditorOrchestrator } from '../Orchestrator/EditorOrchestrator'
+import { metricsBucketNumberForUpdateCount } from '../../Util/bucketNumberForUpdateCount'
+import { RealtimeController } from '../../RealtimeController/RealtimeController'
+import metrics from '@proton/metrics/metricsInstance'
+import type { AuthenticatedDocControllerInterface } from '../../AuthenticatedDocController/AuthenticatedDocControllerInterface'
+import type { CreateComment } from '../../UseCase/CreateComment'
+import type { CreateNewDocument } from '../../UseCase/CreateNewDocument'
+import type { CreateThread } from '../../UseCase/CreateThread'
+import type { DocLoaderStatusObserver } from './StatusObserver'
+import type { DocsApi } from '../../Api/DocsApi'
+import type { DriveCompat } from '@proton/drive-store/lib/useDriveCompat'
+import type { DuplicateDocument } from '../../UseCase/DuplicateDocument'
+import type { EditorControllerInterface } from '../../EditorController/EditorController'
+import type { EditorOrchestratorInterface } from '../Orchestrator/EditorOrchestratorInterface'
+import type { EncryptComment } from '../../UseCase/EncryptComment'
+import type { GetDocumentMeta } from '../../UseCase/GetDocumentMeta'
+import type { GetNode } from './../../UseCase/GetNode'
+import type { HandleRealtimeCommentsEvent } from '../../UseCase/HandleRealtimeCommentsEvent'
+import type { NodeMeta, DocumentType } from '@proton/docs-shared/BasicTypes'
+import type { CommentControllerInterface } from '@proton/docs-shared/CommentServiceInterface'
+import type { InternalEventBusInterface } from '@proton/docs-shared/Events/InternalEventBusInterface'
+import type { SyncedEditorState } from '@proton/docs-shared/State/SyncedEditorState'
+import type { FetchDecryptedCommit } from '../../UseCase/FetchDecryptedCommit'
+import type { LoadDocument } from '../../UseCase/LoadDocument'
+import type { LoadThreads } from '../../UseCase/LoadThreads'
+import type { LoggerInterface } from '@proton/shared/lib/logs'
+import type { MetricService } from '../Metrics/MetricService'
+import type { SeedInitialCommit } from '../../UseCase/SeedInitialCommit'
+import type { SquashDocument } from '../../UseCase/SquashDocument'
+import type { WebsocketServiceInterface } from '../Websockets/WebsocketServiceInterface'
+import { PrivateRenameController, type RenameControllerInterface } from '../../RenameController/RenameController'
+import { redirectToCorrectDocTypeIfNeeded } from '../../Util/redirect-to-correct-doc-type'
+import type { UnleashClient } from '@proton/unleash/UnleashClient'
+import type { DocSizeTracker } from '../../SizeTracker/SizeTracker'
+import { isProtonDocsSpreadsheet } from '@proton/shared/lib/helpers/mimetype'
+import type { SheetsStorageService } from '../SheetsStorage/SheetsStorageService'
+import OpenTracer from '@proton/docs-shared/Tracer/Module'
+
+export class DocLoader implements DocLoaderInterface<DocumentState> {
+  private docController?: AuthenticatedDocControllerInterface
+  private editorController?: EditorControllerInterface
+  private commentsController?: CommentControllerInterface
+  private renameController?: RenameControllerInterface
+  private orchestrator?: EditorOrchestratorInterface
+  private documentState?: DocumentState
+  private readonly statusObservers: DocLoaderStatusObserver<DocumentState>[] = []
+
+  constructor(
+    private websocketService: WebsocketServiceInterface,
+    private driveCompat: DriveCompat,
+    private metricService: MetricService,
+    private docsApi: DocsApi,
+    private squashDoc: SquashDocument,
+    private createInitialCommit: SeedInitialCommit,
+    private loadDocument: LoadDocument,
+    private loadCommit: FetchDecryptedCommit,
+    private encryptComment: EncryptComment,
+    private createComment: CreateComment,
+    private createThread: CreateThread,
+    private loadThreads: LoadThreads,
+    private handleRealtimeCommentsEvent: HandleRealtimeCommentsEvent,
+    private duplicateDocument: DuplicateDocument,
+    private createNewDocument: CreateNewDocument,
+    private getDocumentMeta: GetDocumentMeta,
+    private getNode: GetNode,
+    private eventBus: InternalEventBusInterface,
+    private logger: LoggerInterface,
+    private unleashClient: UnleashClient,
+    private sizeTracker: DocSizeTracker,
+    private syncedEditorState: SyncedEditorState,
+    private sheetsStorageService?: SheetsStorageService,
+  ) {}
+
+  destroy(): void {
+    this.docController?.destroy()
+  }
+
+  public async initialize(
+    nodeMeta: NodeMeta,
+    documentType: DocumentType,
+    options?: DocLoaderInitializeOptions,
+  ): Promise<void> {
+    void OpenTracer.trace('boot_doc_loader_initialize_start', { documentType })
+    if (this.docController) {
+      throw new Error('[DocLoader] docController already initialized')
+    }
+
+    const startTime = Date.now()
+    const { primaryAddressKeys } = options ?? {}
+
+    const loadResult = await this.loadDocument.executePrivate(nodeMeta, primaryAddressKeys)
+    if (loadResult.isFailed()) {
+      void OpenTracer.trace('boot_doc_loader_initialize_private_failed', { code: loadResult.getErrorObject().code })
+      this.logger.error('Failed to load private document', loadResult.getErrorObject())
+      this.statusObservers.forEach((observer) => {
+        observer.onError(loadResult.getErrorObject().message, loadResult.getErrorObject().code)
+      })
+      return
+    }
+
+    const { documentState } = loadResult.getValue()
+    this.logger.info(
+      `Loaded document meta with last commit id ${documentState.getProperty('documentMeta').latestCommitId()}`,
+    )
+
+    const node = documentState.getProperty('decryptedNode')
+    const mimeType = node.mimeType
+
+    redirectToCorrectDocTypeIfNeeded(mimeType, this.docsApi)
+
+    this.documentState = documentState
+
+    const editorController = new EditorController(
+      this.logger,
+      documentState,
+      this.eventBus,
+      isProtonDocsSpreadsheet(mimeType) ? this.sheetsStorageService : undefined,
+    )
+    this.editorController = editorController
+
+    const controller = new AuthenticatedDocController(
+      documentState,
+      this.squashDoc,
+      this.createInitialCommit,
+      this.duplicateDocument,
+      this.createNewDocument,
+      this.getNode,
+      this.eventBus,
+      this.logger,
+      documentType,
+    )
+
+    this.docController = controller
+
+    const realtime = new RealtimeController(
+      this.websocketService,
+      this.eventBus,
+      documentState,
+      this.loadCommit,
+      this.getDocumentMeta,
+      this.logger,
+      this.unleashClient,
+      documentType,
+      this.sizeTracker,
+      'private',
+      this.syncedEditorState,
+    )
+    realtime.initializeConnection()
+
+    this.commentsController = new CommentController(
+      documentState,
+      this.websocketService,
+      this.metricService,
+      this.docsApi,
+      this.encryptComment,
+      this.createThread,
+      this.createComment,
+      this.loadThreads,
+      this.handleRealtimeCommentsEvent,
+      this.eventBus,
+      this.logger,
+    )
+
+    this.orchestrator = new EditorOrchestrator(
+      this.commentsController,
+      this.docsApi,
+      this.eventBus,
+      this.editorController,
+      documentState,
+      this.unleashClient,
+      this.metricService,
+    )
+
+    this.renameController = new PrivateRenameController(
+      documentState,
+      this.driveCompat,
+      this.getNode,
+      this.logger,
+      this.unleashClient,
+    )
+
+    this.statusObservers.forEach((observer) => {
+      if (this.orchestrator) {
+        observer.onSuccess({
+          orchestrator: this.orchestrator,
+          documentState,
+          docController: controller,
+          editorController: editorController,
+          renameController: this.renameController,
+        })
+      }
+    })
+
+    this.commentsController.fetchAllComments()
+
+    const endTime = Date.now()
+    const timeToLoadInSeconds = (endTime - startTime) / 1000
+    metrics.docs_time_load_document_histogram.observe({
+      Labels: {
+        updates: metricsBucketNumberForUpdateCount(documentState.getProperty('baseCommit')?.numberOfMessages() ?? 0),
+      },
+      Value: timeToLoadInSeconds,
+    })
+
+    this.logger.info(`Loaded document in ${timeToLoadInSeconds} seconds`)
+    void OpenTracer.trace('boot_doc_loader_initialize_end')
+  }
+
+  public addStatusObserver(observer: DocLoaderStatusObserver<DocumentState>): () => void {
+    this.statusObservers.push(observer)
+
+    if (this.orchestrator && this.docController && this.editorController && this.documentState) {
+      observer.onSuccess({
+        orchestrator: this.orchestrator,
+        documentState: this.documentState,
+        docController: this.docController,
+        editorController: this.editorController,
+        renameController: this.renameController,
+      })
+    }
+
+    return () => {
+      this.statusObservers.splice(this.statusObservers.indexOf(observer), 1)
+    }
+  }
+}

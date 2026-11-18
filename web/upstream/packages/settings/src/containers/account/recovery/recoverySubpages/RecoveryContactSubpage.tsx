@@ -1,0 +1,64 @@
+import { c } from 'ttag';
+
+import { IncomingDelegatedAccessProvider } from '@proton/account/delegatedAccess/shared/IncomingDelegatedAccessProvider';
+import { OutgoingDelegatedAccessProvider } from '@proton/account/delegatedAccess/shared/OutgoingDelegatedAccessProvider';
+import { selectAvailableRecoveryMethods } from '@proton/account/recovery/sessionRecoverySelectors';
+import { DashboardGrid } from '@proton/atoms/DashboardGrid/DashboardGrid';
+import { Href } from '@proton/atoms/Href/Href';
+import SettingsDescription from '@proton/components/containers/account/SettingsDescription';
+import { useTheme } from '@proton/components/containers/themes/ThemeProvider';
+import { IncomingRecoveryContactParams } from '@proton/delegated-access/recoveryContact/incoming/IncomingRecoveryContactParams';
+import { IncomingRecoveryContactSettings } from '@proton/delegated-access/recoveryContact/incoming/IncomingRecoveryContactSettings';
+import { OutgoingRecoveryContactParams } from '@proton/delegated-access/recoveryContact/outgoing/OutgoingRecoveryContactParams';
+import { OutgoingRecoveryContactSettings } from '@proton/delegated-access/recoveryContact/outgoing/OutgoingRecoveryContactSettings';
+import { IncomingDelegatedAccessActions } from '@proton/delegated-access/shared/IncomingDelegatedAccessActions';
+import { OutgoingDelegatedAccessActions } from '@proton/delegated-access/shared/OutgoingDelegatedAccessActions';
+import { useSelector } from '@proton/redux-shared-store/sharedProvider';
+import type { APP_NAMES } from '@proton/shared/lib/constants';
+import { getKnowledgeBaseUrl } from '@proton/shared/lib/helpers/url';
+
+import darkIllustration from './assets/recovery-contacts-dark.svg';
+import illustration from './assets/recovery-contacts.svg';
+import PasswordResetOptionRequiredWarning from './shared/PasswordResetOptionRequiredWarning';
+
+export const RecoveryContactSubpage = ({ app, emailSubpagePath }: { app: APP_NAMES; emailSubpagePath: string }) => {
+    const theme = useTheme();
+    const isDarkTheme = theme.information.dark;
+    const { hasAccountRecoveryMethod } = useSelector(selectAvailableRecoveryMethods);
+    return (
+        <DashboardGrid>
+            <SettingsDescription
+                right={
+                    <img
+                        src={isDarkTheme ? darkIllustration : illustration}
+                        alt=""
+                        className="shrink-0 hidden md:block"
+                        width={80}
+                        height={80}
+                    />
+                }
+            >
+                <SettingsDescription.Item>
+                    {c('Info')
+                        .t`By adding people you trust as recovery contacts, we'll be able to send them an email to help you if you're having trouble recovering your data after a password reset. You can also be a recovery contact for others.`}{' '}
+                    <Href href={getKnowledgeBaseUrl('/contact-data-recovery')}>{c('Link').t`Learn more`}</Href>
+                </SettingsDescription.Item>
+            </SettingsDescription>
+            <OutgoingDelegatedAccessProvider>
+                <OutgoingDelegatedAccessActions />
+                <OutgoingRecoveryContactParams />
+                <OutgoingRecoveryContactSettings
+                    userHasNoAccountRecoveryMethodSet={!hasAccountRecoveryMethod}
+                    passwordResetOptionRequiredWarning={
+                        <PasswordResetOptionRequiredWarning emailSubpagePath={emailSubpagePath} />
+                    }
+                />
+            </OutgoingDelegatedAccessProvider>
+            <IncomingDelegatedAccessProvider>
+                <IncomingDelegatedAccessActions app={app} />
+                <IncomingRecoveryContactSettings hideEmptyIncomingHelpText={true} />
+                <IncomingRecoveryContactParams />
+            </IncomingDelegatedAccessProvider>
+        </DashboardGrid>
+    );
+};

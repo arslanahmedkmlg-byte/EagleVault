@@ -1,0 +1,46 @@
+import { getCanWrite, getCanAdmin } from '@proton/shared/lib/drive/permissions'
+import type { NodeMeta, PublicNodeMeta } from '@proton/docs-shared/BasicTypes'
+import type { DocumentKeys, PublicDocumentKeys } from '@proton/docs-shared/CryptoTypes'
+import { DocumentRole } from '@proton/docs-shared/Doc/DocumentRole'
+import { isPublicNodeMeta } from '@proton/docs-shared/NodeMetaHelpers'
+import type { SHARE_MEMBER_PERMISSIONS } from '@proton/shared/lib/drive/permissions'
+import type { PrivateKeyReference } from '@protontech/crypto'
+
+export type DocumentEntitlements = {
+  keys: DocumentKeys
+  nodeMeta: NodeMeta
+}
+
+export type PublicDocumentEntitlements = {
+  keys: PublicDocumentKeys
+  nodeMeta: PublicNodeMeta
+}
+
+export function isPublicDocumentEntitlements(
+  entitlements: PublicDocumentEntitlements | DocumentEntitlements,
+): entitlements is PublicDocumentEntitlements {
+  return isPublicNodeMeta(entitlements.nodeMeta)
+}
+
+/** Returns true if the keychain contains a private key that can be used to sign data */
+export function canKeysSign(keys: {
+  userAddressPrivateKey?: PrivateKeyReference
+}): keys is { userAddressPrivateKey: PrivateKeyReference; userOwnAddress: string } {
+  return keys.userAddressPrivateKey !== undefined
+}
+
+export function doKeysBelongToAuthenticatedUser(keys: { userAddressPrivateKey?: PrivateKeyReference }): boolean {
+  return canKeysSign(keys)
+}
+
+export function rawPermissionToRole(permission: SHARE_MEMBER_PERMISSIONS): DocumentRole {
+  if (getCanAdmin(permission)) {
+    return new DocumentRole('Admin')
+  }
+
+  if (getCanWrite(permission)) {
+    return new DocumentRole('Editor')
+  }
+
+  return new DocumentRole('Viewer')
+}

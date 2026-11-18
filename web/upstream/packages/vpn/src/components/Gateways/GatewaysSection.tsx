@@ -1,0 +1,727 @@
+import { useMemo, useState } from 'react';
+
+import { c, msgid } from 'ttag';
+
+import { useUser } from '@proton/account/user/hooks';
+import { useUserPermissions } from '@proton/account/userPermissions/hooks';
+import { useUserSettings } from '@proton/account/userSettings/hooks';
+import { useApi } from '@proton/app-context/useApi';
+import { useNotifications } from '@proton/app-context/useNotifications';
+import { Button } from '@proton/atoms/Button/Button';
+import { Href } from '@proton/atoms/Href/Href';
+import Loader from '@proton/components/components/loader/Loader';
+import { useModalTwoStatic } from '@proton/components/components/modalTwo/useModalTwo';
+import withPermissionGuard from '@proton/components/components/orgPermissions/withPermissionGuard';
+import SettingsSectionWide from '@proton/components/containers/account/SettingsSectionWide';
+import EmptyViewContainer from '@proton/components/containers/app/EmptyViewContainer';
+import { PromotionBanner } from '@proton/components/containers/banner/PromotionBanner';
+import { useSubscriptionModalRaw } from '@proton/components/containers/payments/subscription/subscriptionModalContext';
+import useSortedList from '@proton/components/hooks/useSortedList';
+import { PLANS } from '@proton/payments/core/constants';
+import { getCountryOptions } from '@proton/payments/core/countries';
+import { SUBSCRIPTION_STEPS } from '@proton/payments/core/subscription/subscription-modal-constants';
+import { MINUTE, SERVER_FEATURES, SORT_DIRECTION } from '@proton/shared/lib/constants';
+import { getNonEmptyErrorMessage } from '@proton/shared/lib/helpers/error';
+import type { Organization } from '@proton/shared/lib/interfaces/Organization';
+import { type Either, left, right } from '@proton/shared/lib/interfaces/either';
+import gatewaySvg from '@proton/styles/assets/img/illustrations/gateway.svg';
+import gatewaysEmptyStateAdminsSvg from '@proton/styles/assets/img/illustrations/gateways-empty-state-admins.svg';
+import gatewaysEmptyStateUsersSvg from '@proton/styles/assets/img/illustrations/gateways-empty-state-users.svg';
+import { useFlag } from '@proton/unleash/useFlag';
+
+import {
+    addIpInVPNGateway,
+    addIpsInVPNGateway,
+    createVPNGateway,
+    createVPNGatewayWithMultipleIps,
+    deleteVPNGateway,
+    renameVPNGateway,
+    updateVPNGatewayUsers,
+} from '../../apis/gateway';
+import { getLocationFromId } from '../../functions/gatewayHelpers';
+import { useGateways } from '../../hooks/useGateways';
+import type { Gateway, GatewayLocation, GatewayLogical, GatewayModel } from '../../types/Gateway';
+import { GatewayRenameModal } from './GatewayRenameModal';
+import { GatewayServersModal } from './GatewayServersModal';
+import { GatewayUsersModal } from './GatewayUsersModal';
+import { RemoveGatewayConfirmationModal } from './RemoveGatewayConfirmationModal';
+import { isLogicalDeleted } from './isLogicalDeleted';
+import { GatewayModal } from './tableview/GatewayModal';
+import { GatewaysTableView } from './tableview/GatewaysTableView';
+
+interface Props {
+    organization?: Organization;
+    showCancelButton?: boolean;
+}
+
+const GuardedCreateGatewayButton = withPermissionGuard('account.gateway.create')(Button);
+
+const getFeaturesAndUserIds = (data: Partial<GatewayModel>): [number, string[] | null, string[] | null] => {
+    const features = data.Features || 0;
+
+    return [
+        features,
+        features & SERVER_FEATURES.DOUBLE_RESTRICTION ? data.UserIds || [] : null,
+        features & SERVER_FEATURES.DOUBLE_RESTRICTION ? data.GroupIds || [] : null,
+    ];
+};
+
+export const GatewaysSection = ({ organization, showCancelButton = true }: Props) => {
+    const api = useApi();
+    const isMultiIpEndpointEnabled = useFlag('VpnOrganizationLogRelayGatewayCreationMultiIp');
+    const isMultiIpAddEndpointEnabled = useFlag('VpnOrganizationLogRelayGatewayUpdateMultiIp');
+    const [createModal, showCreateModal] = useModalTwoStatic(GatewayModal);
+    const [renameModal, showRenameModal] = useModalTwoStatic(GatewayRenameModal);
+    const [usersModal, showUsersModal] = useModalTwoStatic(GatewayUsersModal);
+    const [serversModal, showServersModal] = useModalTwoStatic(GatewayServersModal);
+    const [removeConfirmationModal, showRemoveConfirmationModal] = useModalTwoStatic(RemoveGatewayConfirmationModal);
+    const [user] = useUser();
+    const [{ permissions }] = useUserPermissions();
+    const { createNotification } = useNotifications();
+    const [userSettings] = useUserSettings();
+    const [deletedLogicals, setDeletedLogicals] = useState<Record<string, boolean>>({});
+    const [deletingLogicals, setDeletingLogicals] = useState<readonly string[]>([]);
+    const [updatedLogicals, setUpdatedLogicals] = useState<Record<string, GatewayLogical>>({});
+    const {
+        hasGatewaysAccess,
+        planWithIpAddon,
+        config: {
+            Table: { IPv4, IPv6, Load, Deleted },
+            ServerTable: serverTableConfig,
+            Provisioning: { TranslatedDuration: provisioningDuration },
+        },
+        users,
+        groups,
+        locations,
+        gateways,
+        refresh,
+    } = useGateways(organization, 10 * MINUTE);
+    const refreshList = async () => {
+        setUpdatedLogicals({});
+        await refresh();
+    };
+    const allGateways = useMemo<readonly Gateway[]>(() => {
+        const ids: Record<string, true> = {};
+
+        return [...(gateways || [])]
+            .map((gateway) => ({
+                ...gateway,
+                Logicals: gateway.Logicals.filter((l) => !deletedLogicals[l.ID] && (l.Visible || !l.Servers.length)) // Filter out deleted and hidden logicals
+                    .map((l) => updatedLogicals[l.ID] || l),
+            }))
+            .filter((gateway) => {
+                const name = gateway.Name;
+
+                if (ids[name]) {
+                    return false;
+                }
+
+                if (gateway.Logicals.length) {
+                    ids[name] = true;
+
+                    return true;
+                }
+
+                return false;
+            });
+    }, [gateways, updatedLogicals, deletedLogicals]);
+    const { sortedList } = useSortedList(allGateways as Gateway[], { key: 'Name', direction: SORT_DIRECTION.ASC });
+    const openSubscriptionModal = useSubscriptionModalRaw();
+
+    if (!organization || !user || !gateways || !locations) {
+        return <Loader />;
+    }
+
+    const createGateway = async (apiRequest: any): Promise<Gateway> => {
+        const createdGateway = (await api<{ Gateway: Gateway }>(apiRequest))?.Gateway;
+
+        const newDeletedLogicals = { ...deletedLogicals };
+        const newUpdatedLogicals = { ...updatedLogicals };
+        let touched = false;
+
+        createdGateway.Logicals?.forEach((logical) => {
+            if ((newUpdatedLogicals[logical.ID] || newDeletedLogicals[logical.ID]) && logical.Visible) {
+                touched = true;
+
+                newUpdatedLogicals[logical.ID] = logical;
+                delete newDeletedLogicals[logical.ID];
+            }
+        });
+
+        if (touched) {
+            setDeletedLogicals(newDeletedLogicals);
+            setUpdatedLogicals(newUpdatedLogicals);
+        }
+
+        return createdGateway;
+    };
+
+    const getCustomizeSubscriptionOpener =
+        (plan = planWithIpAddon) =>
+        () =>
+            openSubscriptionModal({
+                step: SUBSCRIPTION_STEPS.CHECKOUT,
+                plan,
+            });
+
+    const isAdmin = user.isAdmin && user.isSelf;
+    const canViewGateways = isAdmin || !!permissions?.['account.gateway.read'];
+    const canManageSubscription = isAdmin;
+
+    const countryOptions = getCountryOptions(userSettings);
+
+    if (!hasGatewaysAccess) {
+        // translator: Full sentence "With a Professional plan, you can purchase dedicated servers for your organization, and set up Gateways to control which users can access them"
+        const boldProfessionalPlan = <b key="bold-professional-plan">{c('Info').t`Professional`}</b>;
+        const boldDedicatedServers = (
+            <b key="bold-dedicated-servers">{
+                // translator: Full sentence "With a Professional plan, you can purchase dedicated servers for your organization, and set up Gateways to control which users can access them"
+                c('Info').t`dedicated servers`
+            }</b>
+        );
+        const boldGateways = (
+            <b key="bold-gateways">{
+                // translator: Full sentence "With a Professional plan, you can purchase dedicated servers for your organization, and set up Gateways to control which users can access them"
+                c('Info').t`Gateways`
+            }</b>
+        );
+
+        return (
+            <SettingsSectionWide>
+                <PromotionBanner
+                    rounded
+                    mode="banner"
+                    contentCentered={false}
+                    icon={<img src={gatewaySvg} alt="" width={40} height={40} />}
+                    description={
+                        <div>
+                            <b>{c('Info').t`Enhance your network security`}</b>
+                            <div>
+                                {
+                                    // translator: Full sentence "With a Professional plan, you can purchase dedicated servers for your organization, and set up Gateways to control which users can access them"
+                                    c('Info')
+                                        .jt`With a ${boldProfessionalPlan} plan, you can purchase ${boldDedicatedServers} for your organization, and set up ${boldGateways} to control which users can access them.`
+                                }{' '}
+                                <Href
+                                    href="https://protonvpn.com/support/manage-vpn-servers-organization"
+                                    title={c('Info').t`Learn more about Gateways`}
+                                >{c('Link').t`Learn more`}</Href>
+                            </div>
+                        </div>
+                    }
+                    cta={
+                        canManageSubscription && (
+                            <Button
+                                color="norm"
+                                fullWidth
+                                onClick={getCustomizeSubscriptionOpener(PLANS.VPN_BUSINESS)}
+                                title={c('Title').t`Setup dedicated servers by upgrading to Business`}
+                            >
+                                {c('Action').t`Upgrade to Business`}
+                            </Button>
+                        )
+                    }
+                />
+            </SettingsSectionWide>
+        );
+    }
+
+    const ipAddresses = organization?.MaxDedicatedIPs ?? 0;
+
+    const deletedInCountries: Record<string, number> = {};
+    const ipCount = allGateways.reduce((total, gateway) => {
+        return (
+            total +
+            gateway.Logicals.reduce((sum, logical) => {
+                if (isLogicalDeleted(logical)) {
+                    deletedInCountries[gateway.ExitCountry] = (deletedInCountries[gateway.ExitCountry] || 0) + 1;
+
+                    return sum;
+                }
+
+                return sum + Math.max(1, logical.Servers?.length || 0);
+            }, 0)
+        );
+    }, 0);
+    const canAdd = ipAddresses > ipCount;
+
+    const createServersSequentially = async (
+        data: GatewayModel,
+        initialGateway?: Gateway,
+        key = 'gateway-creation',
+        getNotificationMessage?: (serverNumber: number, total: number) => string
+    ): Promise<Gateway | undefined> => {
+        const quantities = data.Quantities;
+
+        if (!quantities) {
+            return;
+        }
+
+        const locationIds = Object.keys(quantities);
+        const total = locationIds.reduce((total, location) => total + (quantities[location] || 0), 0);
+        let gatewayHost: Gateway | undefined = initialGateway;
+        let serverNumber = 0;
+
+        for (let i = 0; i < locationIds.length; i++) {
+            const locationId = locationIds[i];
+
+            for (let j = 0; j < quantities[locationId]; j++) {
+                ++serverNumber;
+
+                createNotification({
+                    key,
+                    text: getNotificationMessage
+                        ? getNotificationMessage(serverNumber, total)
+                        : /*
+                        translator: "Creating gateway servers" refers to the whole operation, so pluralization uses ${total}, not ${serverNumber}, "Creating gateway servers: 1 / 3" is plural in English because we are creating a gateway of 3 servers
+                        translator: This message appears when starting to creating a gateway that will contain ${total} server in the end (total is always an integer and at least 2, so for any language with "One" form < 2, don't care much about singular)
+                        */ c('Info').ngettext(
+                              msgid`Creating gateway server: ${serverNumber} / ${total}`,
+                              `Creating gateway servers: ${serverNumber} / ${total}`,
+                              total
+                          ),
+                    type: 'info',
+                });
+
+                if (!gatewayHost) {
+                    const [features, usersIds, groupIds] = getFeaturesAndUserIds(data);
+
+                    gatewayHost = await createGateway(
+                        createVPNGateway({
+                            Name: data.Name,
+                            Location: getLocationFromId(locationId),
+                            Features: features,
+                            UserIds: usersIds,
+                            GroupIds: groupIds,
+                        })
+                    );
+
+                    continue;
+                }
+
+                try {
+                    gatewayHost = await createGateway(
+                        addIpInVPNGateway({
+                            Name: gatewayHost.Name,
+                            Location: getLocationFromId(locationId),
+                        })
+                    );
+                } catch (error) {
+                    createNotification({
+                        key,
+                        text: getNonEmptyErrorMessage(error),
+                        type: 'warning',
+                    });
+
+                    return gatewayHost;
+                }
+            }
+        }
+
+        return gatewayHost;
+    };
+
+    const createGatewayInOneRequest = async (data: GatewayModel): Promise<Gateway | undefined> => {
+        const quantities = data.Quantities;
+
+        if (!quantities || !data.Name) {
+            return;
+        }
+
+        const locations: GatewayLocation[] = Object.entries(quantities).flatMap(([locationId, count]) =>
+            Array.from({ length: count }, () => getLocationFromId(locationId))
+        );
+
+        const total = locations.length;
+
+        if (total === 0) {
+            return;
+        }
+
+        createNotification({
+            key: 'gateway-creation',
+            text: c('Info').ngettext(
+                msgid`Creating gateway with ${total} server`,
+                `Creating gateway with ${total} servers`,
+                total
+            ),
+            type: 'info',
+        });
+
+        const [features, usersIds, groupIds] = getFeaturesAndUserIds(data);
+
+        try {
+            return await createGateway(
+                createVPNGatewayWithMultipleIps({
+                    Name: data.Name,
+                    Locations: locations,
+                    Features: features,
+                    UserIds: usersIds,
+                    GroupIds: groupIds,
+                })
+            );
+        } catch (error) {
+            createNotification({
+                key: 'gateway-creation',
+                text: getNonEmptyErrorMessage(error),
+                type: 'warning',
+            });
+
+            return undefined;
+        }
+    };
+
+    const addServersInOneRequest = async (
+        gateway: Gateway,
+        addedQuantities: Record<string, number>,
+        notificationKey: string
+    ): Promise<void> => {
+        const locations: GatewayLocation[] = Object.entries(addedQuantities).flatMap(([locationId, count]) =>
+            Array.from({ length: count }, () => getLocationFromId(locationId))
+        );
+
+        const total = locations.length;
+
+        if (total === 0) {
+            return;
+        }
+
+        createNotification({
+            key: notificationKey,
+            text: c('Info').ngettext(msgid`Adding ${total} gateway server`, `Adding ${total} gateway servers`, total),
+            type: 'info',
+        });
+
+        try {
+            await api(
+                addIpsInVPNGateway({
+                    Name: gateway.Name,
+                    Locations: locations,
+                })
+            );
+        } catch (error) {
+            createNotification({
+                key: notificationKey,
+                text: getNonEmptyErrorMessage(error),
+                type: 'warning',
+            });
+        }
+    };
+
+    const buildGateway = async (data: GatewayModel): Promise<Gateway | undefined> => {
+        if (data.Quantities) {
+            if (isMultiIpEndpointEnabled) {
+                return createGatewayInOneRequest(data);
+            }
+
+            return createServersSequentially(data);
+        }
+
+        const [features, usersIds, groupIds] = getFeaturesAndUserIds(data);
+
+        return createGateway(
+            createVPNGateway({
+                Name: data.Name,
+                Location: data.Location,
+                Features: features,
+                UserIds: usersIds,
+                GroupIds: groupIds,
+            })
+        );
+    };
+
+    const addGateway = () =>
+        showCreateModal({
+            countryOptions,
+            showCancelButton,
+            locations,
+            deletedInCountries,
+            ownedCount: ipAddresses,
+            usedCount: ipCount,
+            users,
+            groups,
+            onSubmitDone: async (data: GatewayModel) => {
+                const gateway = await buildGateway(data);
+
+                if (!gateway) {
+                    createNotification({
+                        text: c('Error').t`Impossible to create the gateway`,
+                        type: 'error',
+                    });
+
+                    return;
+                }
+
+                await refreshList();
+            },
+        });
+
+    const editGatewayServers = (gateway: Gateway) => () =>
+        showServersModal({
+            countryOptions,
+            showCancelButton,
+            gateway,
+            locations,
+            deletedInCountries,
+            users,
+            ownedCount: ipAddresses,
+            usedCount: ipCount,
+            showDeleted: serverTableConfig.Deleted,
+            showIPv4: serverTableConfig.IPv4,
+            showIPv6: serverTableConfig.IPv6,
+            showLoad: serverTableConfig.Load,
+            onSubmitDone: async (deletedLogicalIds: readonly string[], addedQuantities: Record<string, number>) => {
+                const deletedServerCount = deletedLogicalIds.length;
+                const total = Object.entries(addedQuantities).reduce((total, [, quantity]) => total + quantity, 0);
+
+                if (deletedServerCount && total) {
+                    createNotification({
+                        key: 'gateway-servers-editions',
+                        text: c('Info').ngettext(
+                            msgid`Deleting ${deletedServerCount} gateway server`,
+                            `Deleting ${deletedServerCount} gateway servers`,
+                            deletedServerCount
+                        ),
+                        type: 'info',
+                    });
+                }
+
+                if (deletedServerCount) {
+                    await api(deleteVPNGateway(deletedLogicalIds));
+                }
+
+                if (deletedServerCount && total) {
+                    createNotification({
+                        key: 'gateway-servers-editions',
+                        text: c('Info').ngettext(
+                            msgid`Adding ${total} gateway server`,
+                            `Adding ${total} gateway servers`,
+                            total
+                        ),
+                        type: 'info',
+                    });
+                }
+
+                if (total) {
+                    if (isMultiIpAddEndpointEnabled) {
+                        await addServersInOneRequest(gateway, addedQuantities, 'gateway-servers-editions');
+                    } else {
+                        await createServersSequentially(
+                            {
+                                Name: gateway.Name,
+                                Features: gateway.Logicals[0]?.Features,
+                                UserIds: gateway.Logicals[0]?.Users,
+                                Quantities: addedQuantities,
+                                GroupIds: gateway.GroupIds,
+                            },
+                            gateway,
+                            'gateway-servers-editions',
+                            (serverNumber: number, total: number) =>
+                                /*
+                                translator: "Creating gateway servers" refers to the whole operation, so pluralization uses ${total}, not ${serverNumber}, "Creating gateway servers: 1 / 3" is plural in English because we are creating a gateway of 3 servers
+                                translator: This message appears when starting to creating a gateway that will contain ${total} server in the end (total is always an integer and at least 2, so for any language with "One" form < 2, don't care much about singular)
+                                */ c('Info').ngettext(
+                                    msgid`Adding gateway server: ${serverNumber} / ${total}`,
+                                    `Adding gateway servers: ${serverNumber} / ${total}`,
+                                    total
+                                )
+                        );
+                    }
+                }
+
+                await refreshList();
+            },
+            onUpsell: getCustomizeSubscriptionOpener(),
+        });
+
+    const editGatewayUsers = (gateway: Gateway, logical: GatewayLogical) => () =>
+        showUsersModal({
+            showCancelButton,
+            model: {
+                features: logical.Features,
+                userIds: logical.Users,
+                groupIds: logical.Groups,
+            },
+            users,
+            groups,
+            onSubmitDone: async (data: GatewayModel) => {
+                const [features, usersIds, groupIds] = getFeaturesAndUserIds(data);
+
+                const update = await api<{ Gateway: Gateway }>(
+                    updateVPNGatewayUsers(gateway.Name, features, usersIds, groupIds)
+                );
+
+                if (!update?.Gateway) {
+                    createNotification({
+                        text: c('Error').t`Impossible to edit the gateway`,
+                        type: 'error',
+                    });
+
+                    return;
+                }
+
+                await refreshList();
+            },
+        });
+
+    const renameGateway = (id: string, currentName: string) => () => {
+        if (deletingLogicals.indexOf(id) !== -1) {
+            return;
+        }
+
+        showRenameModal({
+            showCancelButton,
+            currentName,
+            onSubmitDone: async ({ Name: newName }: { Name: string }) => {
+                const gateway = await api<{ Gateway: Gateway }>(renameVPNGateway(currentName, newName));
+
+                if (!gateway?.Gateway) {
+                    createNotification({
+                        text: c('Error').t`Impossible to rename the gateway`,
+                        type: 'error',
+                    });
+
+                    return;
+                }
+
+                await refreshList();
+            },
+        });
+    };
+
+    const deleteGateway = async (gateway: Gateway): Promise<Either<'ok', 'error'>> => {
+        const ids = gateway.Logicals.map(({ ID }) => ID);
+
+        if (deletingLogicals.some((id) => ids.indexOf(id) !== -1)) {
+            return right('error');
+        }
+
+        setDeletingLogicals([...deletingLogicals, ...ids]);
+
+        try {
+            const { Logicals: logicals } = await api<{ Logicals: GatewayLogical[] }>(deleteVPNGateway(ids));
+            const update = { ...updatedLogicals };
+            const kept: Record<string, boolean> = {};
+
+            logicals.forEach((logical) => {
+                kept[logical.ID] = true;
+                update[logical.ID] = logical;
+            });
+
+            setUpdatedLogicals(update);
+
+            if (ids.length !== Object.keys(kept).length) {
+                const removed: Record<string, boolean> = { ...deletedLogicals };
+
+                ids.forEach((id) => {
+                    if (!kept[id]) {
+                        removed[id] = true;
+                    }
+                });
+
+                setDeletedLogicals(removed);
+            }
+
+            return left('ok');
+        } catch {
+            return right('error');
+        } finally {
+            setDeletingLogicals(deletingLogicals.filter((deletingId) => ids.indexOf(deletingId) === -1));
+        }
+    };
+
+    const showRemoveGatewayConfirmationModal = (gateway: Gateway) => {
+        showRemoveConfirmationModal({
+            gateway,
+            countryOptions,
+            onSubmit: () => deleteGateway(gateway),
+        });
+    };
+    return (
+        <>
+            {canViewGateways && (
+                <>
+                    {createModal}
+                    {renameModal}
+                    {serversModal}
+                    {removeConfirmationModal}
+                    {usersModal}
+                    <div className="mb-4 flex items-center gap-2">
+                        <span className="color-weak">
+                            {c('Info').ngettext(
+                                msgid`You are currently using ${ipCount} of your ${ipAddresses} available dedicated server.`,
+                                `You are currently using ${ipCount} of your ${ipAddresses} available dedicated servers.`,
+                                ipAddresses
+                            )}
+                        </span>
+                        {canManageSubscription && (
+                            <Button
+                                size="small"
+                                color="norm"
+                                shape={canAdd ? 'outline' : 'solid'}
+                                onClick={getCustomizeSubscriptionOpener()}
+                                title={c('Title').t`Customize the number of IP addresses in your plan`}
+                            >
+                                {c('Action').t`Get more servers`}
+                            </Button>
+                        )}
+                    </div>
+                </>
+            )}
+
+            {sortedList.length ? (
+                <GatewaysTableView
+                    gateways={sortedList}
+                    countryOptions={countryOptions}
+                    users={users ?? []}
+                    groups={groups ?? []}
+                    canViewGateways={canViewGateways}
+                    canAdd={canAdd}
+                    showDeleted={Deleted}
+                    showIPv4={IPv4}
+                    showIPv6={IPv6}
+                    showLoad={Load}
+                    provisioningDuration={provisioningDuration}
+                    deletingLogicals={deletingLogicals}
+                    deletedLogicals={deletedLogicals}
+                    renameGateway={renameGateway}
+                    editGatewayServers={editGatewayServers}
+                    editGatewayUsers={editGatewayUsers}
+                    deleteGateway={(gateway) => () => showRemoveGatewayConfirmationModal(gateway)}
+                    addGateway={addGateway}
+                />
+            ) : (
+                <EmptyViewContainer
+                    key="no-gateways-container"
+                    imageProps={{
+                        src: canViewGateways ? gatewaysEmptyStateAdminsSvg : gatewaysEmptyStateUsersSvg,
+                        title: c('Info').t`No gateways`,
+                    }}
+                >
+                    <h2 className="h3 text-bold">
+                        {canViewGateways ? c('Info').t`Create your first Gateway` : c('Info').t`No Gateways yet`}
+                    </h2>
+                    <p className="color-weak">
+                        {canViewGateways
+                            ? c('Info')
+                                  .t`Organize your dedicated servers into Gateways and decide which members can access them.`
+                            : c('Info').t`Ask your organization admin to setup Gateways.`}
+                    </p>
+
+                    {canViewGateways && (
+                        <div>
+                            <GuardedCreateGatewayButton
+                                color="norm"
+                                disabled={!canAdd}
+                                onClick={addGateway}
+                                title={c('Title').t`Create a new gateway`}
+                            >
+                                {c('Action').t`Create Gateway`}
+                            </GuardedCreateGatewayButton>
+                        </div>
+                    )}
+                </EmptyViewContainer>
+            )}
+        </>
+    );
+};

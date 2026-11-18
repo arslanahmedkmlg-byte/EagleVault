@@ -1,0 +1,53 @@
+{
+    "name": "@proton/unleash",
+    "description": "Unleash feature flags",
+    "sideEffects": [
+        "**/*.css"
+    ],
+    "exports": {
+        "./useFlag": "./useFlag.ts",
+        "./useGetFlag": "./useGetFlag.ts",
+        "./useVariant": "./useVariant.ts",
+        "./UnleashClient": "./UnleashClient.ts",
+        "./getMaxContactsImportConfig": "./helpers/getMaxContactsImportConfig.ts",
+        "./getUnleashReadyPromise": "./readyPromise.ts",
+        "./standaloneClient": "./standaloneClient.ts",
+        "./UnleashFlagProvider": "./UnleashFlagProvider.tsx",
+        "./UnleashFlagProviderWithToolbar": "./UnleashFlagProviderWithToolbar.tsx",
+        "./UnleashFeatureFlagsVariants": "./UnleashFeatureFlagsVariants.ts",
+        "./Flags": "./UnleashFeatureFlags.ts",
+        "./UnleashCookiesProvider": "./storage/UnleashCookiesProvider.ts",
+        "./testing/mockUnleash": "./testing/mockUnleash.ts",
+        "./testing/mockUseFlag": "./testing/mockUseFlag.ts",
+        "./testing/vitest/mockUnleash": "./testing/vitest/mockUnleash.ts",
+        "./testing/vitest/mockUseFlag": "./testing/vitest/mockUseFlag.ts"
+    },
+    "scripts": {
+        "check:types": "tsc --checkers 1",
+        "lint": "oxlint --quiet",
+        "pretty": "oxfmt --write \"**/*.{js,ts,tsx}\"",
+        "test": "vitest",
+        "test:ci": "pnpm run test --run"
+    },
+    "dependencies": {
+        "@proton/shared": "workspace:^",
+        "@unleash/proxy-client-react": "^5.1.0",
+        "@unleash/toolbar": "^1.2.1",
+        "date-fns": "catalog:",
+        "react": "catalog:",
+        "unleash-proxy-client": "^3.8.0"
+    },
+    "devDependencies": {
+        "@proton/oxlint-config": "workspace:^",
+        "@proton/vitest-config": "workspace:^",
+        "@types/node": "catalog:",
+        "@types/react": "catalog:",
+        "@types/webpack-env": "catalog:",
+        "@typescript/native": "catalog:",
+        "happy-dom": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    }
+}

@@ -1,0 +1,29 @@
+export enum MESSAGE_ACTIONS {
+    NEW = -1,
+    REPLY = 0,
+    REPLY_ALL = 1,
+    FORWARD = 2,
+}
+
+export enum ENCRYPTED_STATUS {
+    PGP_MIME = 8, // Used for attachment
+}
+
+export const LARGE_KEY_SIZE = 50 * 1024;
+
+export const MESSAGE_IMAGE_ATTRIBUTES_TO_LOAD = ['url', 'src', 'svg', 'background', 'poster'];
+
+export const PLACEHOLDER_ID_PREFIX = 'placeholder';
+
+export const LOAD_RETRY_DELAY = 3000; // in ms => 3s
+
+/**
+ * We can't schedule a message before this 120sec buffer
+ * This can be applied to snoozed message and schedule send
+ */
+export const FUTURE_MESSAGES_BUFFER = 120;
+
+export enum SAVE_DRAFT_ERROR_CODES {
+    MESSAGE_ALREADY_SENT = 15034,
+    DRAFT_DOES_NOT_EXIST = 15033,
+}

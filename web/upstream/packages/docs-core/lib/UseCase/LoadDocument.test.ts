@@ -1,0 +1,261 @@
+import { ApiResult } from '@proton/docs-shared/ApiResult'
+import { DynamicResult } from '@proton/docs-shared/DynamicResult'
+import { Result } from '@proton/docs-shared/Result'
+import type { DecryptCommit } from './DecryptCommit'
+import type { NodeMeta } from '@proton/docs-shared/BasicTypes'
+import type { GetDocumentKeys } from './GetDocumentKeys'
+import type { GetNode } from './GetNode'
+import type { GetNodePermissions } from './GetNodePermissions'
+import type { FetchMetaAndRawCommit } from './FetchMetaAndRawCommit'
+import { LoadDocument } from './LoadDocument'
+import type { LoggerInterface } from '@proton/shared/lib/logs'
+import { DocumentState, PublicDocumentState } from '../State/DocumentState'
+import { DecryptedCommit } from '../Models/DecryptedCommit'
+import { LoadLogger } from '../LoadLogger/LoadLogger'
+import { jwtDecode } from 'jwt-decode'
+import { SHARE_MEMBER_PERMISSIONS, SHARE_URL_PERMISSIONS } from '@proton/shared/lib/drive/permissions'
+import type { RealtimeTokenPayload } from './FetchRealtimeToken'
+import { rawPermissionToRole } from '../Types/DocumentEntitlements'
+import { DocsApiErrorCode } from '@proton/shared/lib/api/docs'
+import { setPublicLinkInfo, type PublicLinkInfo } from '../DriveSDK/getPublicDrive'
+import { getPublicDocumentKeys } from '../DriveSDK/getDocumentKeys'
+import { hasDirectAccessToPublicNode } from '../DriveSDK/hasDirectAccessToPublicNode'
+
+jest.mock('jwt-decode', () => ({
+  jwtDecode: jest.fn(),
+}))
+
+jest.mock('../DriveSDK/getDocumentKeys', () => ({
+  getPublicDocumentKeys: jest.fn(),
+}))
+
+jest.mock('../DriveSDK/hasDirectAccessToPublicNode', () => ({
+  hasDirectAccessToPublicNode: jest.fn(),
+}))
+
+const mockJwtDecode = jest.mocked(jwtDecode)
+
+describe('LoadDocument', () => {
+  let loadDocument: LoadDocument
+  let mockGetNode: jest.Mocked<GetNode>
+  let mockDecryptCommit: jest.Mocked<DecryptCommit>
+  let mockLoadMetaAndCommit: jest.Mocked<FetchMetaAndRawCommit>
+  let mockGetDocumentKeys: jest.Mocked<GetDocumentKeys>
+  let mockGetNodePermissions: jest.Mocked<GetNodePermissions>
+  let mockLogger: jest.Mocked<LoggerInterface>
+
+  const nodeMeta: NodeMeta = {
+    volumeId: 'volume-1',
+    linkId: 'link-1',
+  }
+
+  const token = 'token-1'
+
+  beforeEach(() => {
+    jest.spyOn(LoadLogger, 'logEventRelativeToLoadTime').mockImplementation(jest.fn())
+
+    mockGetNode = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetNode>
+
+    mockDecryptCommit = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<DecryptCommit>
+
+    mockLoadMetaAndCommit = {
+      execute: jest.fn().mockResolvedValue(Result.ok({ realtimeTokenResult: ApiResult.ok({ preferences: {} }) })),
+    } as unknown as jest.Mocked<FetchMetaAndRawCommit>
+
+    mockGetDocumentKeys = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetDocumentKeys>
+
+    mockGetNodePermissions = {
+      execute: jest.fn(),
+    } as unknown as jest.Mocked<GetNodePermissions>
+
+    mockLogger = {
+      error: jest.fn(),
+    } as unknown as jest.Mocked<LoggerInterface>
+
+    mockJwtDecode.mockReturnValue({
+      Permissions: SHARE_URL_PERMISSIONS.EDITOR,
+    } satisfies RealtimeTokenPayload)
+
+    loadDocument = new LoadDocument(
+      mockGetNode,
+      mockDecryptCommit,
+      mockLoadMetaAndCommit,
+      mockGetDocumentKeys,
+      mockGetNodePermissions,
+      mockLogger,
+    )
+  })
+
+  describe('executePrivate', () => {
+    const mockNode = {
+      name: 'test-doc',
+      trashed: false,
+    }
+
+    const mockKeys = {
+      documentContentKey: 'test-key',
+      userOwnAddress: 'test@example.com',
+    }
+
+    const mockMeta = {
+      latestCommitId: () => 'commit-1',
+    }
+
+    beforeEach(() => {
+      mockGetNode.execute.mockResolvedValue(Result.ok({ node: mockNode, fromCache: false } as any))
+      mockGetDocumentKeys.execute.mockResolvedValue(Result.ok({ keys: mockKeys as any, fromCache: false } as any))
+      mockGetNodePermissions.execute.mockResolvedValue(
+        Result.ok({ role: rawPermissionToRole(SHARE_MEMBER_PERMISSIONS.EDITOR), fromCache: false } as any),
+      )
+      mockLoadMetaAndCommit.execute.mockResolvedValue(
+        DynamicResult.ok({
+          serverBasedMeta: mockMeta,
+          latestCommit: undefined,
+          realtimeTokenResult: ApiResult.ok({ token, preferences: {} }),
+        } as any),
+      )
+    })
+
+    it('should successfully load a private document', async () => {
+      const result = await loadDocument.executePrivate(nodeMeta)
+
+      expect(result.isFailed()).toBe(false)
+      expect(result.getValue().documentState).toBeInstanceOf(DocumentState)
+    })
+
+    it('should handle cached node and refresh from network', async () => {
+      mockGetNode.execute
+        .mockResolvedValueOnce(Result.ok({ node: mockNode, fromCache: true } as any))
+        .mockResolvedValueOnce(Result.ok({ node: { ...mockNode, name: 'updated-name' }, fromCache: false } as any))
+
+      await loadDocument.executePrivate(nodeMeta)
+
+      expect(mockGetNode.execute).toHaveBeenCalledTimes(2)
+      expect(mockGetNode.execute).toHaveBeenCalledWith(nodeMeta, { useCache: true })
+      expect(mockGetNode.execute).toHaveBeenCalledWith(nodeMeta, { useCache: false })
+    })
+
+    it('should handle failed node loading', async () => {
+      mockGetNode.execute.mockResolvedValue(Result.fail('Node loading failed'))
+
+      const result = await loadDocument.executePrivate(nodeMeta)
+
+      expect(result.isFailed()).toBe(true)
+      expect(result.getErrorObject().message).toBe('Node loading failed')
+    })
+
+    it('should handle failed keys loading', async () => {
+      mockGetDocumentKeys.execute.mockResolvedValue(Result.fail('Keys loading failed'))
+
+      const result = await loadDocument.executePrivate(nodeMeta)
+
+      expect(result.isFailed()).toBe(true)
+      expect(result.getErrorObject().message).toBe('Keys loading failed')
+    })
+
+    it('should handle commit decryption when commit exists', async () => {
+      const mockCommit = { updates: { documentUpdates: [] } }
+      mockLoadMetaAndCommit.execute.mockResolvedValue(
+        DynamicResult.ok({
+          serverBasedMeta: mockMeta,
+          latestCommit: mockCommit,
+          realtimeTokenResult: ApiResult.ok({ token, preferences: {} }),
+        } as any),
+      )
+      mockDecryptCommit.execute.mockResolvedValue(Result.ok(new DecryptedCommit('commit-1', [])))
+
+      const result = await loadDocument.executePrivate(nodeMeta)
+
+      expect(mockDecryptCommit.execute).toHaveBeenCalled()
+      expect(result.isFailed()).toBe(false)
+    })
+
+    it('should use node permissions when the realtime token is unavailable', async () => {
+      mockLoadMetaAndCommit.execute.mockResolvedValue(
+        DynamicResult.ok({
+          serverBasedMeta: mockMeta,
+          latestCommit: undefined,
+          realtimeTokenResult: ApiResult.fail({ message: 'File or folder not found', code: DocsApiErrorCode.Unknown }),
+        } as any),
+      )
+
+      const result = await loadDocument.executePrivate(nodeMeta)
+
+      expect(result.isFailed()).toBe(false)
+      expect(mockGetNodePermissions.execute).toHaveBeenCalledWith(nodeMeta, { useCache: true })
+      expect(result.getValue().documentState.getProperty('userRole').canEdit()).toBe(true)
+    })
+  })
+
+  describe('executePublic', () => {
+    const publicNodeMeta = {
+      volumeId: 'volume-1',
+      linkId: 'link-1',
+    }
+
+    const publicLinkInfo: PublicLinkInfo = {
+      customPassword: '',
+      linkId: 'link-1',
+      volumeId: 'volume-1',
+      isSharedUrlAFolder: false,
+      permissions: SHARE_URL_PERMISSIONS.EDITOR,
+      hasDirectAccess: false,
+    }
+
+    beforeEach(() => {
+      setPublicLinkInfo(publicLinkInfo)
+      mockGetNode.execute.mockResolvedValue(
+        Result.ok({
+          node: { name: 'public-doc', trashed: false },
+          fromCache: false,
+        } as any),
+      )
+      jest.mocked(getPublicDocumentKeys).mockResolvedValue({ documentContentKey: 'public-key' as any })
+      jest.mocked(hasDirectAccessToPublicNode).mockResolvedValue(false)
+      mockLoadMetaAndCommit.execute.mockResolvedValue(
+        DynamicResult.ok({
+          serverBasedMeta: { latestCommitId: () => 'commit-1' },
+          latestCommit: undefined,
+          realtimeTokenResult: ApiResult.ok({ token: 'token-1', preferences: {} }),
+        } as any),
+      )
+    })
+
+    it('should successfully load a public document', async () => {
+      const result = await loadDocument.executePublic(publicNodeMeta as any, true)
+
+      expect(result.isFailed()).toBe(false)
+      expect(result.getValue().documentState).toBeInstanceOf(PublicDocumentState)
+    })
+
+    it('should handle public editing permissions', async () => {
+      const result = await loadDocument.executePublic(publicNodeMeta as any, true)
+
+      expect(result.getValue().documentState.getProperty('userRole').isPublicEditor()).toBe(true)
+    })
+
+    it('should fail if permissions are not loaded', async () => {
+      setPublicLinkInfo({ ...publicLinkInfo, permissions: undefined as unknown as SHARE_URL_PERMISSIONS })
+
+      const result = await loadDocument.executePublic(publicNodeMeta as any, true)
+
+      expect(result.isFailed()).toBe(true)
+      expect(result.getError()).toBe('Permissions not yet loaded')
+    })
+
+    it('should handle failed meta loading', async () => {
+      mockLoadMetaAndCommit.execute.mockResolvedValue(DynamicResult.fail({ message: 'Meta loading failed', code: 0 }))
+
+      const result = await loadDocument.executePublic(publicNodeMeta as any, true)
+
+      expect(result.isFailed()).toBe(true)
+      expect(result.getError()).toBe('Meta loading failed')
+    })
+  })
+})

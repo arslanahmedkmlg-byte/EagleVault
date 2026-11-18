@@ -1,0 +1,194 @@
+import type {
+  MaybeArray,
+  PrivateKeyReference,
+  PublicKeyReference,
+  SessionKey,
+  VERIFICATION_STATUS,
+} from '@protontech/crypto'
+import { CryptoProxy } from '@protontech/crypto'
+import { SignedPlaintextContent } from '@proton/docs-proto/Generated/DocumentUpdate'
+import {
+  encryptDataWith16ByteIV as gcmEncryptWith16ByteIV,
+  decryptData as gcmDecrypt,
+  encryptData,
+} from '@protontech/crypto/subtle/aesGcm.ts'
+import mergeUint8Arrays from '@proton/utils/mergeUint8Arrays'
+import { utf8StringToUint8Array } from '@protontech/crypto/utils'
+import type { EncryptionContext } from './EncryptionContext'
+import { deriveGcmKey } from '../../Crypto/deriveGcmKey'
+import { HKDF_SALT_SIZE } from '../../Crypto/Constants'
+import { Result } from '@proton/docs-shared/Result'
+import type { DriveCompatWrapper } from '@proton/drive-store/lib/DriveCompatWrapper'
+import type { Api } from '@proton/shared/lib/interfaces/Api'
+import { getPublicKeysForEmail } from '../../Crypto/getPublicKeysForEmail'
+
+type EncryptionServiceOptions = {
+  providedGetVerificationKey?: (email: string) => Promise<PublicKeyReference[]>
+}
+
+export class EncryptionService<C extends EncryptionContext> {
+  private providedGetVerificationKey?: EncryptionServiceOptions['providedGetVerificationKey']
+
+  constructor(
+    private context: C,
+    private driveCompat: DriveCompatWrapper,
+    private api: Api,
+    { providedGetVerificationKey }: EncryptionServiceOptions = {},
+  ) {
+    this.providedGetVerificationKey = providedGetVerificationKey
+  }
+
+  private getContext(associatedData: string) {
+    return `docs.${this.context}.${associatedData}`
+  }
+
+  public async signAndEncryptData(
+    data: Uint8Array<ArrayBuffer>,
+    associatedData: string,
+    sessionKey: SessionKey,
+    signingKey: PrivateKeyReference,
+  ): Promise<Result<Uint8Array<ArrayBuffer>>> {
+    try {
+      const contextString = this.getContext(associatedData)
+      const contextBytes = utf8StringToUint8Array(contextString)
+      const signature = await CryptoProxy.signMessage({
+        binaryData: data,
+        signingKeys: signingKey,
+        signatureContext: { value: contextString, critical: true },
+        detached: true,
+        format: 'binary',
+      })
+      const contentToEncrypt = new SignedPlaintextContent({
+        content: data,
+        signature,
+      })
+
+      const hkdfSalt = crypto.getRandomValues(new Uint8Array(HKDF_SALT_SIZE))
+      const key = await deriveGcmKey(sessionKey, hkdfSalt, contextBytes)
+      const ciphertext = await gcmEncryptWith16ByteIV(
+        key,
+        contentToEncrypt.serializeBinary() as Uint8Array<ArrayBuffer>,
+        contextBytes,
+      )
+      return Result.ok(mergeUint8Arrays([hkdfSalt, ciphertext]))
+    } catch (error) {
+      return Result.fail(`Failed to sign and encrypt data ${error}`)
+    }
+  }
+
+  public async encryptAnonymousData(
+    data: Uint8Array<ArrayBuffer>,
+    associatedData: string,
+    sessionKey: SessionKey,
+  ): Promise<Result<Uint8Array<ArrayBuffer>>> {
+    try {
+      const contextString = this.getContext(associatedData)
+      const contextBytes = utf8StringToUint8Array(contextString)
+      const contentToEncrypt = new SignedPlaintextContent({
+        content: data,
+      })
+
+      const hkdfSalt = crypto.getRandomValues(new Uint8Array(HKDF_SALT_SIZE))
+      const key = await deriveGcmKey(sessionKey, hkdfSalt, contextBytes)
+      const ciphertext = await gcmEncryptWith16ByteIV(
+        key,
+        contentToEncrypt.serializeBinary() as Uint8Array<ArrayBuffer>,
+        contextBytes,
+      )
+      return Result.ok(mergeUint8Arrays([hkdfSalt, ciphertext]))
+    } catch (error) {
+      return Result.fail(`Failed to sign and encrypt data ${error}`)
+    }
+  }
+
+  public async encryptDataForLocalStorage(
+    data: Uint8Array<ArrayBuffer>,
+    associatedData: string,
+    encryptionKey: CryptoKey,
+  ): Promise<Result<Uint8Array<ArrayBuffer>>> {
+    try {
+      const contextBytes = utf8StringToUint8Array(this.getContext(associatedData))
+      const cipherbytes = await encryptData(encryptionKey, data, contextBytes)
+      return Result.ok(cipherbytes)
+    } catch (error) {
+      return Result.fail(`Failed to sign and encrypt data ${error}`)
+    }
+  }
+
+  public async decryptDataForLocalStorage(
+    data: Uint8Array<ArrayBuffer>,
+    associatedData: string,
+    encryptionKey: CryptoKey,
+  ): Promise<Result<Uint8Array<ArrayBuffer>>> {
+    try {
+      const contextBytes = utf8StringToUint8Array(this.getContext(associatedData))
+      const decryptedData = await gcmDecrypt(encryptionKey, data, contextBytes)
+      return Result.ok(decryptedData)
+    } catch (error) {
+      return Result.fail(`Failed to decrypt data ${error}`)
+    }
+  }
+
+  public async decryptData(
+    encryptedData: Uint8Array<ArrayBuffer>,
+    associatedData: string,
+    sessionKey: SessionKey,
+  ): Promise<Result<SignedPlaintextContent>> {
+    try {
+      const contextString = this.getContext(associatedData)
+      const contextBytes = utf8StringToUint8Array(contextString)
+      const hkdfSalt = encryptedData.subarray(0, HKDF_SALT_SIZE)
+      const ciphertext = encryptedData.subarray(HKDF_SALT_SIZE)
+      const key = await deriveGcmKey(sessionKey, hkdfSalt, contextBytes)
+      const decryptedData = await gcmDecrypt(key, ciphertext, contextBytes, true)
+
+      return Result.ok(SignedPlaintextContent.deserializeBinary(decryptedData))
+    } catch (error) {
+      return Result.fail(`Failed to decrypt data ${error}`)
+    }
+  }
+
+  async verifyData(
+    data: Uint8Array<ArrayBuffer>,
+    signature: Uint8Array<ArrayBuffer>,
+    associatedData: string,
+    verificationKeys: MaybeArray<PublicKeyReference>,
+  ): Promise<Result<VERIFICATION_STATUS>> {
+    try {
+      const contextString = this.getContext(associatedData)
+      const { verificationStatus } = await CryptoProxy.verifyMessage({
+        binaryData: data,
+        binarySignature: signature,
+        verificationKeys,
+        signatureContext: { value: contextString, required: true },
+        format: 'binary',
+      })
+
+      return Result.ok(verificationStatus)
+    } catch (error) {
+      return Result.fail(`Failed to verify data ${error}`)
+    }
+  }
+
+  async getVerificationKey(email: string): Promise<Result<PublicKeyReference[]>> {
+    try {
+      if (this.driveCompat.getCompatType() === 'public') {
+        const value = await getPublicKeysForEmail(this.api, email)
+        if (!value) {
+          return Result.fail(`Failed to get public keys for email in public context`)
+        }
+
+        const keys = await Promise.all(value.map((publicKey) => CryptoProxy.importPublicKey({ armoredKey: publicKey })))
+        return Result.ok(keys)
+      }
+
+      const value = this.providedGetVerificationKey
+        ? await this.providedGetVerificationKey(email)
+        : await this.driveCompat.getUserCompat().getVerificationKey(email)
+
+      return Result.ok(value)
+    } catch (error) {
+      return Result.fail(`Failed to get verification key ${error}`)
+    }
+  }
+}

@@ -1,0 +1,124 @@
+import { useState } from 'react';
+
+import { c } from 'ttag';
+
+import { useApi } from '@proton/app-context/useApi';
+import { useNotifications } from '@proton/app-context/useNotifications';
+import { Button } from '@proton/atoms/Button/Button';
+import Form from '@proton/components/components/form/Form';
+import ModalTwo from '@proton/components/components/modalTwo/Modal';
+import ModalTwoContent from '@proton/components/components/modalTwo/ModalContent';
+import ModalTwoFooter from '@proton/components/components/modalTwo/ModalFooter';
+import ModalTwoHeader from '@proton/components/components/modalTwo/ModalHeader';
+import FontFaceSelect from '@proton/components/containers/layouts/FontFaceSelect';
+import FontSizeSelect from '@proton/components/containers/layouts/FontSizeSelect';
+import { updateFontFace, updateFontSize } from '@proton/shared/lib/api/mailSettings';
+import type { MailSettings } from '@proton/shared/lib/interfaces/MailSettings';
+import {
+    DEFAULT_FONT_FACE,
+    DEFAULT_FONT_SIZE,
+    getFontFaceIdFromValue,
+    getFontFaceValueFromId,
+} from '@proton/shared/lib/mail/fontFace';
+
+interface Props {
+    mailSettings?: MailSettings;
+    /** Receives the mail settings the API returns after saving the font */
+    onMailSettingsChange?: (mailSettings: MailSettings) => void;
+    onClose?: () => void;
+    onChange?: (nextFontFace: string, nextFontSize: number) => void;
+}
+
+const DefaultFontModal = ({ mailSettings, onMailSettingsChange, onChange, onClose, ...rest }: Props) => {
+    const api = useApi();
+
+    const [fontFace, setFontFace] = useState(getFontFaceValueFromId(mailSettings?.FontFace) || DEFAULT_FONT_FACE);
+    const [fontSize, setFontSize] = useState(mailSettings?.FontSize || DEFAULT_FONT_SIZE);
+    const [loading, setLoading] = useState(false);
+    const { createNotification } = useNotifications();
+
+    const changedFontFace = fontFace !== mailSettings?.FontFace;
+    const changedFontSize = fontSize !== mailSettings?.FontSize;
+    const somethingChanged = changedFontFace || changedFontSize;
+
+    const notifyPreferenceSaved = () => createNotification({ text: c('Success').t`Preference saved` });
+
+    const onSubmit = async () => {
+        setLoading(true);
+
+        let updatedMailSettings: MailSettings | undefined;
+
+        if (changedFontFace) {
+            const fontFaceId = getFontFaceIdFromValue(fontFace);
+            if (fontFaceId) {
+                ({ MailSettings: updatedMailSettings } = await api<{ MailSettings: MailSettings }>(
+                    updateFontFace(fontFaceId)
+                ));
+            }
+        }
+
+        if (changedFontSize) {
+            ({ MailSettings: updatedMailSettings } = await api<{ MailSettings: MailSettings }>(
+                updateFontSize(fontSize)
+            ));
+        }
+
+        if (updatedMailSettings) {
+            onMailSettingsChange?.(updatedMailSettings);
+        }
+
+        if (somethingChanged) {
+            notifyPreferenceSaved();
+        }
+
+        onChange?.(fontFace, fontSize);
+
+        setLoading(false);
+        onClose?.();
+    };
+
+    return (
+        <ModalTwo onSubmit={onSubmit} onClose={onClose} as={Form} size="small" {...rest}>
+            <ModalTwoHeader title={c('Update font modal').t`Update default font and size`} />
+            <ModalTwoContent>
+                <div>
+                    <div className="flex flex-row">
+                        <div className="mr-4">
+                            <FontFaceSelect
+                                aria-label={c('Label').t`Font family`}
+                                id="fontFace"
+                                fontFace={fontFace}
+                                onChange={setFontFace}
+                                loading={loading}
+                            />
+                        </div>
+                        <div>
+                            <FontSizeSelect
+                                aria-label={c('Label').t`Font size`}
+                                id="fontSize"
+                                fontSize={fontSize}
+                                onChange={setFontSize}
+                                loading={loading}
+                            />
+                        </div>
+                    </div>
+
+                    <p>
+                        <span className="color-weak">{c('Update font modal')
+                            .t`Your default font will look like following:`}</span>
+                        <br />
+                        <span className="mt-0" style={{ fontFamily: fontFace, fontSize: `${fontSize}px` }}>{c(
+                            'Update font modal'
+                        ).t`Today is a good day to write an email`}</span>
+                    </p>
+                </div>
+            </ModalTwoContent>
+            <ModalTwoFooter>
+                <Button type="reset" onClick={onClose}>{c('Action').t`Cancel`}</Button>
+                <Button color="norm" type="submit" disabled={!somethingChanged}>{c('Action').t`Update`}</Button>
+            </ModalTwoFooter>
+        </ModalTwo>
+    );
+};
+
+export default DefaultFontModal;

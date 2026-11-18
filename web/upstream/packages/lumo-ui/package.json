@@ -1,0 +1,68 @@
+{
+    "name": "@proton/lumo-ui",
+    "description": "Product-agnostic Lumo design library — chat UI elements + shared confirm-card presentation",
+    "license": "GPL-3.0",
+    "author": "",
+    "sideEffects": [
+        "*.scss"
+    ],
+    "type": "module",
+    "exports": {
+        "./types/IconComponent": "./types/IconComponent.ts",
+        "./shared-components/LumoLogo/LumoLogo": "./shared-components/LumoLogo/LumoLogo.tsx",
+        "./shared-components/LumoWordmark/LumoWordmark": "./shared-components/LumoWordmark/LumoWordmark.tsx",
+        "./shared-components/LumoThinking/LumoThinking": "./shared-components/LumoThinking/LumoThinking.tsx",
+        "./shared-components/LoadingBar/LoadingBar": "./shared-components/LoadingBar/LoadingBar.tsx",
+        "./shared-components/PromptInput/PromptInput": "./shared-components/PromptInput/PromptInput.tsx",
+        "./shared-components/DictationControl/DictationControl": "./shared-components/DictationControl/DictationControl.tsx",
+        "./shared-components/Chip/Chip": "./shared-components/Chip/Chip.tsx",
+        "./shared-components/ServerToolChip/ServerToolChip": "./shared-components/ServerToolChip/ServerToolChip.tsx",
+        "./shared-components/ConfirmCardShell/ConfirmCardShell": "./shared-components/ConfirmCardShell/ConfirmCardShell.tsx",
+        "./shared-components/WelcomeSuggestions/WelcomeSuggestions": "./shared-components/WelcomeSuggestions/WelcomeSuggestions.tsx",
+        "./utils/markdown": "./utils/markdown.ts",
+        "./shared-components/MoveItemsCard/MoveItemsCard": "./shared-components/MoveItemsCard/MoveItemsCard.tsx",
+        "./shared-components/ToolCallCard/ToolCallCard": "./shared-components/ToolCallCard/ToolCallCard.tsx",
+        "./shared-components/Disclosure/Disclosure": "./shared-components/Disclosure/Disclosure.tsx",
+        "./shared-components/ItemCheckList/ItemCheckList": "./shared-components/ItemCheckList/ItemCheckList.tsx",
+        "./shared-components/NoteLine/NoteLine": "./shared-components/NoteLine/NoteLine.tsx",
+        "./shared-components/sentenceValue/sentenceValue": "./shared-components/sentenceValue/sentenceValue.tsx",
+        "./styles/lumo-ui.scss": "./styles/lumo-ui.scss"
+    },
+    "scripts": {
+        "check:types": "tsc --checkers 1",
+        "lint": "oxlint --quiet",
+        "test": "vitest",
+        "test:ci": "pnpm run test --run",
+        "test:watch": "pnpm run test --watch"
+    },
+    "dependencies": {
+        "@proton/atoms": "workspace:^",
+        "@proton/icons": "workspace:^",
+        "@proton/styles": "workspace:^",
+        "@proton/utils": "workspace:^",
+        "markdown-it": "^14.3.3",
+        "react": "catalog:",
+        "react-dom": "catalog:",
+        "ttag": "catalog:"
+    },
+    "devDependencies": {
+        "@proton/oxlint-config": "workspace:^",
+        "@proton/types": "workspace:^",
+        "@proton/vitest-config": "workspace:^",
+        "@testing-library/dom": "catalog:",
+        "@testing-library/jest-dom": "catalog:",
+        "@testing-library/react": "catalog:",
+        "@types/markdown-it": "^13.0.9",
+        "@types/node": "catalog:",
+        "@types/react": "catalog:",
+        "@types/react-dom": "catalog:",
+        "@types/webpack-env": "catalog:",
+        "@typescript/native": "catalog:",
+        "@vitejs/plugin-react": "catalog:",
+        "@vitest/coverage-v8": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    }
+}

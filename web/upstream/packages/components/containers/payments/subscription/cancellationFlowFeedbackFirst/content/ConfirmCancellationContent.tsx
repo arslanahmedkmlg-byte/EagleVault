@@ -1,0 +1,85 @@
+import { format, fromUnixTime } from 'date-fns';
+import { c } from 'ttag';
+
+import { Button } from '@proton/atoms/Button/Button';
+import { Href } from '@proton/atoms/Href/Href';
+import { IcArrowsRotate } from '@proton/icons/icons/IcArrowsRotate';
+import { IcCalendarGrid } from '@proton/icons/icons/IcCalendarGrid';
+import { IcEnvelopeDot } from '@proton/icons/icons/IcEnvelopeDot';
+import { IcFolderArrowUp } from '@proton/icons/icons/IcFolderArrowUp';
+import { IcPaperClip } from '@proton/icons/icons/IcPaperClip';
+import { getPlanName, getPlanTitle } from '@proton/payments/core/subscription/helpers';
+import type { Subscription } from '@proton/payments/core/subscription/interface';
+import { getKnowledgeBaseUrl } from '@proton/shared/lib/helpers/url';
+import { dateLocale } from '@proton/shared/lib/i18n';
+
+import ModalTwoContent from '../../../../../components/modalTwo/ModalContent';
+import ModalTwoFooter from '../../../../../components/modalTwo/ModalFooter';
+import ModalTwoHeader from '../../../../../components/modalTwo/ModalHeader';
+import StripedItem from '../../../../../components/stripedList/StripedItem';
+import { StripedList } from '../../../../../components/stripedList/StripedList';
+import { getPlanDisplayName } from '../helpers/getPlanDisplayName';
+
+interface Props {
+    subscription: Subscription;
+    onKeepPlan: () => void;
+    onCancelSubscription: () => void;
+}
+
+export const ConfirmCancellationContent = ({ subscription, onKeepPlan, onCancelSubscription }: Props) => {
+    const endDate = subscription.PeriodEnd
+        ? format(fromUnixTime(subscription.PeriodEnd), 'PPP', { locale: dateLocale })
+        : '';
+    const planName = getPlanName(subscription);
+    const planDisplayName = planName ? getPlanDisplayName(planName, getPlanTitle(subscription)) : undefined;
+    const endText = planDisplayName
+        ? c('Confirm cancellation')
+              .t`When your ${planDisplayName} subscription ends on ${endDate}, you'll lose its features. If your usage then exceeds your plan limits, some features may be temporarily unavailable.`
+        : c('Confirm cancellation')
+              .t`When your subscription ends on ${endDate}, you'll lose its features. If your usage then exceeds your plan limits, some features may be temporarily unavailable.`;
+
+    const warningItems = [
+        { icon: <IcEnvelopeDot />, text: c('Confirm cancellation').t`Receive new emails` },
+        { icon: <IcPaperClip />, text: c('Confirm cancellation').t`Send emails with attachments` },
+        { icon: <IcCalendarGrid />, text: c('Confirm cancellation').t`Manage your calendar` },
+        { icon: <IcFolderArrowUp />, text: c('Confirm cancellation').t`Upload any new files` },
+        { icon: <IcArrowsRotate />, text: c('Confirm cancellation').t`Back up photos from your devices` },
+    ];
+
+    return (
+        <>
+            <ModalTwoHeader title={c('Confirm cancellation').t`Confirm cancellation`} />
+            <ModalTwoContent>
+                <p>
+                    {endText} <Href href={getKnowledgeBaseUrl('/free-plan-limits')}>{c('Link').t`Learn more`}</Href>
+                </p>
+
+                <p className="mb-4 mt-6 text-lg text-bold">
+                    {c('Confirm cancellation').t`If you exceed your plan limits, you won't be able to:`}
+                </p>
+
+                <StripedList alternate="odd" className="mt-0">
+                    {warningItems.map(({ icon, text }) => {
+                        return (
+                            <StripedItem key={text} left={icon}>
+                                {text}
+                            </StripedItem>
+                        );
+                    })}
+                </StripedList>
+
+                <p className="color-weak mt-4">
+                    {c('Confirm cancellation').t`Access is restored once usage is back within limits.`}
+                </p>
+            </ModalTwoContent>
+            <ModalTwoFooter className="flex justify-end gap-2">
+                <Button shape="outline" color="weak" onClick={onKeepPlan}>
+                    {c('Confirm cancellation').t`Keep current plan`}
+                </Button>
+                <Button color="danger" onClick={onCancelSubscription}>
+                    {c('Confirm cancellation').t`Cancel subscription`}
+                </Button>
+            </ModalTwoFooter>
+        </>
+    );
+};

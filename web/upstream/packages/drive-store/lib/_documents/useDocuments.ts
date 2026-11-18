@@ -1,0 +1,176 @@
+import { queryCreateDocument } from '@proton/shared/lib/api/drive/documents';
+import type { CreateDocumentResult } from '@proton/shared/lib/interfaces/drive/documents';
+import {
+    encryptName,
+    generateContentKeys,
+    generateLookupHash,
+    generateNodeKeys,
+    sign,
+} from '@proton/shared/lib/keys/driveKeys';
+
+import useActions from '../../store/_actions/useActions';
+import useDebouncedRequest from '../../store/_api/useDebouncedRequest';
+import type { DocumentType } from '../../store/_documents/useOpenDocument';
+import { encryptExtendedAttributes } from '../../store/_links/extendedAttributes';
+import useLink from '../../store/_links/useLink';
+import useLinksState from '../../store/_links/useLinksState';
+import useShare from '../../store/_shares/useShare';
+import useAbortSignal from '../../store/_views/utils/useAbortSignal';
+import { EnrichedError } from '../../utils/errorHandling/EnrichedError';
+import type { LegacyNodeMeta } from '../NodeMeta';
+import type { DocumentNodeMeta } from './interface';
+
+export const useDocuments = () => {
+    const debouncedRequest = useDebouncedRequest();
+    const abortSignal = useAbortSignal([]);
+    const { getLink, getLinkPrivateKey, getLinkHashKey, getLinkSessionKey } = useLink();
+    const { removeLinkForDriveCompat } = useLinksState();
+    const { getShareCreatorKeys } = useShare();
+    const { trashLinks, restoreLinks, deletePermanently, confirmModal } = useActions();
+
+    const getDocumentSigningKeys = async (shareId: string) => {
+        // getShareCreatorKeys gets the key from `share.addressId` which is always
+        // corresponding to the member of a share. This function will be renamed in a refactor.
+        return getShareCreatorKeys(abortSignal, shareId);
+    };
+
+    const createDocumentNode = async (
+        { shareId, linkId: parentLinkId }: LegacyNodeMeta,
+        name: string,
+        documentType: DocumentType
+    ): Promise<DocumentNodeMeta> => {
+        const [parentPrivateKey, parentHashKey, { privateKey: addressKey, address }] = await Promise.all([
+            getLinkPrivateKey(abortSignal, shareId, parentLinkId),
+            getLinkHashKey(abortSignal, shareId, parentLinkId),
+            getDocumentSigningKeys(shareId),
+        ]);
+
+        const [Hash, { NodeKey, NodePassphrase, privateKey, NodePassphraseSignature }, encryptedName] =
+            await Promise.all([
+                generateLookupHash(name, parentHashKey).catch((e) =>
+                    Promise.reject(
+                        new EnrichedError('Failed to generate document link lookup hash during document creation', {
+                            tags: {
+                                shareId,
+                                parentLinkId,
+                            },
+                            extra: { e },
+                        })
+                    )
+                ),
+                generateNodeKeys(parentPrivateKey, addressKey).catch((e) =>
+                    Promise.reject(
+                        new EnrichedError('Failed to generate document link node keys during document creation', {
+                            tags: {
+                                shareId,
+                                parentLinkId,
+                            },
+                            extra: { e },
+                        })
+                    )
+                ),
+                encryptName(name, parentPrivateKey, addressKey).catch((e) =>
+                    Promise.reject(
+                        new EnrichedError('Failed to encrypt document link name during document creation', {
+                            tags: {
+                                shareId,
+                                parentLinkId,
+                            },
+                            extra: { e },
+                        })
+                    )
+                ),
+            ]);
+
+        const xattr = await encryptExtendedAttributes(
+            {
+                Common: {},
+            },
+            privateKey,
+            addressKey
+        );
+
+        const {
+            ContentKeyPacket,
+            ContentKeyPacketSignature,
+            sessionKey: contentKey,
+        } = await generateContentKeys(privateKey);
+
+        // Documents do not have any blocks, so we sign an empty array.
+        const ManifestSignature = await sign(new Uint8Array([]), addressKey);
+
+        const { Document } = await debouncedRequest<CreateDocumentResult>(
+            queryCreateDocument(shareId, {
+                Name: encryptedName,
+                Hash,
+                ParentLinkID: parentLinkId,
+                NodePassphrase,
+                NodePassphraseSignature,
+                SignatureAddress: address.Email,
+                NodeKey,
+                ContentKeyPacket,
+                ContentKeyPacketSignature,
+                ManifestSignature,
+                XAttr: xattr,
+                DocumentType: documentType === 'doc' ? 1 : 2,
+            }),
+            abortSignal
+        );
+
+        return {
+            linkId: Document.LinkID,
+            volumeId: Document.VolumeID,
+            keys: {
+                documentContentKey: contentKey,
+                userAddressPrivateKey: addressKey,
+                userOwnAddress: address.Email,
+            },
+        };
+    };
+
+    const getDocumentKeys = async ({ shareId, linkId }: Omit<LegacyNodeMeta, 'volumeId'>) => {
+        const contentKey = await getLinkSessionKey(abortSignal, shareId, linkId);
+
+        if (!contentKey) {
+            throw new EnrichedError('Could not find document content key', {
+                tags: { shareId, linkId },
+            });
+        }
+
+        return contentKey;
+    };
+
+    const trashDocument = async (
+        { shareId, linkId, volumeId }: LegacyNodeMeta,
+        parentLinkId: string
+    ): Promise<void> => {
+        await trashLinks(abortSignal, [{ linkId, rootShareId: shareId, parentLinkId, isFile: true, volumeId }]);
+        removeLinkForDriveCompat(shareId, linkId);
+        await getLink(abortSignal, shareId, linkId);
+    };
+
+    const deleteDocumentPermanently = async (
+        { shareId, linkId, volumeId }: LegacyNodeMeta,
+        parentLinkId: string
+    ): Promise<void> => {
+        await deletePermanently(abortSignal, [{ linkId, rootShareId: shareId, parentLinkId, isFile: true, volumeId }]);
+    };
+
+    const restoreDocument = async (
+        { shareId, linkId, volumeId }: LegacyNodeMeta,
+        parentLinkId: string
+    ): Promise<void> => {
+        await restoreLinks(abortSignal, [{ linkId, parentLinkId, rootShareId: shareId, isFile: true, volumeId }]);
+        removeLinkForDriveCompat(shareId, linkId);
+        await getLink(abortSignal, shareId, linkId);
+    };
+
+    return {
+        createDocumentNode,
+        getDocumentKeys,
+        trashDocument,
+        restoreDocument,
+        deleteDocumentPermanently,
+        confirmModal,
+    };
+};

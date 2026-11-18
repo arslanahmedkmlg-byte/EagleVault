@@ -1,0 +1,185 @@
+import { renderHook } from '@testing-library/react';
+import type { Mock } from 'vitest';
+
+import { APPS } from '@proton/shared/lib/constants';
+
+import { useAlwaysOnUpsell } from './AlwaysOnUpsell/useAlwaysOnUpsell';
+import { useGoUnlimited2025 } from './GoUnlimitedOffer/hooks/useGoUnlimited2025';
+import { useMailSubscriptionReminder } from './MailSubscriptionReminder/useMailSubscriptionReminder';
+import { usePaidUsersNudge } from './PaidUsersNudge/hooks/usePaidUsersNudge';
+import { useDrivePostSignupOneDollar } from './PostSignupOneDollar/DrivePostSignupOneDollar/useDrivePostSignupOneDollar';
+import { useMailPostSignupOneDollar } from './PostSignupOneDollar/MailPostSignupOneDollar/useMailPostSignupOneDollar';
+import { useMailPostSignup099 } from './PostSignupZeroNinetyNine/useMailPostSignup099';
+import { useUnlimitedToDuoOffer } from './UnlimitedToDuoOffer/hooks/useUnlimitedToDuoOffer';
+import { usePostSignupOffers } from './usePostSignupOffers';
+
+vi.mock('./PostSignupOneDollar/MailPostSignupOneDollar/useMailPostSignupOneDollar');
+const mockUseMailPostSignupOneDollar = useMailPostSignupOneDollar as Mock;
+
+vi.mock('./PostSignupZeroNinetyNine/useMailPostSignup099');
+const mockUseMailPostSignup099 = useMailPostSignup099 as Mock;
+
+vi.mock('./PostSignupOneDollar/DrivePostSignupOneDollar/useDrivePostSignupOneDollar');
+const mockUseDrivePostSignupOneDollar = useDrivePostSignupOneDollar as Mock;
+
+vi.mock('./AlwaysOnUpsell/useAlwaysOnUpsell');
+const mockUseAlwaysOnUpsell = useAlwaysOnUpsell as Mock;
+
+vi.mock('./MailSubscriptionReminder/useMailSubscriptionReminder');
+const mockUseMailSubscriptionReminder = useMailSubscriptionReminder as Mock;
+
+vi.mock('./PaidUsersNudge/hooks/usePaidUsersNudge');
+const mockUsePaidUsersNudge = usePaidUsersNudge as Mock;
+
+vi.mock('./GoUnlimitedOffer/hooks/useGoUnlimited2025');
+const mockUseGoUnlimited2025 = useGoUnlimited2025 as Mock;
+
+vi.mock('./UnlimitedToDuoOffer/hooks/useUnlimitedToDuoOffer');
+const mockUseUnlimitedToDuoOffer = useUnlimitedToDuoOffer as Mock;
+
+describe('usePostSignupOffers', () => {
+    beforeEach(() => {
+        mockUseMailPostSignupOneDollar.mockReturnValue({
+            isEligible: false,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        mockUseMailPostSignup099.mockReturnValue({
+            isEligible: false,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        mockUseDrivePostSignupOneDollar.mockReturnValue({
+            isEligible: false,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        mockUseAlwaysOnUpsell.mockReturnValue({
+            isEligible: false,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        mockUseMailSubscriptionReminder.mockReturnValue({
+            isEligible: false,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        mockUsePaidUsersNudge.mockReturnValue({
+            isEligible: false,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        mockUseGoUnlimited2025.mockReturnValue({
+            isEligible: false,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        mockUseUnlimitedToDuoOffer.mockReturnValue({
+            isEligible: false,
+            isLoading: false,
+            openSpotlight: false,
+        });
+    });
+
+    afterEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('should return the mail post-signup offer when user is eligible for both mail offer and always-on upsell', () => {
+        mockUseMailPostSignupOneDollar.mockReturnValue({
+            isEligible: true,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        mockUseAlwaysOnUpsell.mockReturnValue({
+            isEligible: true,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        const { result } = renderHook(() => usePostSignupOffers({ app: APPS.PROTONMAIL }));
+        expect(result.current.id).toBe('mail-one-dollar-offer');
+    });
+
+    it('should return always-on upsell when mail post-signup offer is not eligible but always-on is', () => {
+        mockUseAlwaysOnUpsell.mockReturnValue({
+            isEligible: true,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        const { result } = renderHook(() => usePostSignupOffers({ app: APPS.PROTONMAIL }));
+        expect(result.current.id).toBe('always-on-upsell');
+    });
+
+    it('should return undefined when neither offer is eligible', () => {
+        const { result } = renderHook(() => usePostSignupOffers({ app: APPS.PROTONMAIL }));
+        expect(result.current.id).toBeUndefined();
+    });
+
+    it('should prefer the 0.99 offer over the one dollar offer when both are eligible', () => {
+        // The 0.99 promo takes priority while it is running
+        mockUseMailPostSignupOneDollar.mockReturnValue({
+            isEligible: true,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        mockUseMailPostSignup099.mockReturnValue({
+            isEligible: true,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        const { result } = renderHook(() => usePostSignupOffers({ app: APPS.PROTONMAIL }));
+        expect(result.current.id).toBe('mail-zero-ninety-nine-offer');
+    });
+
+    it('should fall back to the one dollar offer when the 0.99 offer is not eligible', () => {
+        mockUseMailPostSignupOneDollar.mockReturnValue({
+            isEligible: true,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        const { result } = renderHook(() => usePostSignupOffers({ app: APPS.PROTONMAIL }));
+        expect(result.current.id).toBe('mail-one-dollar-offer');
+    });
+
+    it('should return the 0.99 offer when the one dollar offer is not eligible', () => {
+        // The previously-subscribed free user this promo exists for
+        mockUseMailPostSignup099.mockReturnValue({
+            isEligible: true,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        const { result } = renderHook(() => usePostSignupOffers({ app: APPS.PROTONMAIL }));
+        expect(result.current.id).toBe('mail-zero-ninety-nine-offer');
+    });
+
+    it('should return the 0.99 offer over the always-on upsell', () => {
+        mockUseMailPostSignup099.mockReturnValue({
+            isEligible: true,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        mockUseAlwaysOnUpsell.mockReturnValue({
+            isEligible: true,
+            isLoading: false,
+            openSpotlight: false,
+        });
+
+        const { result } = renderHook(() => usePostSignupOffers({ app: APPS.PROTONMAIL }));
+        expect(result.current.id).toBe('mail-zero-ninety-nine-offer');
+    });
+});

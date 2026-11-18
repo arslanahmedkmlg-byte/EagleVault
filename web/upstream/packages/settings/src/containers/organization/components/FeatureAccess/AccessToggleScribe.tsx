@@ -1,0 +1,120 @@
+import { c } from 'ttag';
+
+import { organizationActions } from '@proton/account/organization';
+import { useOrganization } from '@proton/account/organization/hooks';
+import { useApi } from '@proton/app-context/useApi';
+import { useNotifications } from '@proton/app-context/useNotifications';
+import { ButtonLike } from '@proton/atoms/Button/ButtonLike';
+import SettingsLink from '@proton/components/components/link/SettingsLink';
+import { useSubscriptionModal } from '@proton/components/containers/payments/subscription/subscriptionModalContext';
+import { getWritingAssistantTitle } from '@proton/components/helpers/assistant';
+import useAssistantFeatureEnabled from '@proton/components/hooks/assistant/useAssistantFeatureEnabled';
+import useLoading from '@proton/hooks/useLoading';
+import { IcPenSparks } from '@proton/icons/icons/IcPenSparks';
+import { SUBSCRIPTION_STEPS } from '@proton/payments/core/subscription/subscription-modal-constants';
+import { useDispatch } from '@proton/redux-shared-store/sharedProvider';
+import { updateOrganizationSettings } from '@proton/shared/lib/api/organization';
+import { APPS } from '@proton/shared/lib/constants';
+import type { OrganizationSettings } from '@proton/shared/lib/interfaces/Organization';
+import lumoIcon from '@proton/styles/assets/img/lumo/lumo-cat-icon.svg';
+import { useFlag } from '@proton/unleash/useFlag';
+
+import { AccessToggle } from './AccessToggle';
+
+const UserAndAddresses = () => (
+    <ButtonLike
+        shape="underline"
+        as={SettingsLink}
+        path="/users-addresses"
+        app={APPS.PROTONMAIL}
+        target="_self"
+        className="color-weak p-0"
+        key="user-and-addresses-link"
+    >
+        {
+            // translator: full sentence is: Helps write, reply to, and proofread emails. If disabled only administrators will have access. Manage for individual users in <Users and addresses> or <add more seats>
+            c('Link (Scribe)').t`Users and addresses`
+        }
+    </ButtonLike>
+);
+
+const AddMoreSeats = () => {
+    const [openSubscriptionModal, loadingSubscriptionModal] = useSubscriptionModal();
+
+    const handleGetMoreLicense = () => {
+        void openSubscriptionModal({
+            step: SUBSCRIPTION_STEPS.CHECKOUT,
+            disablePlanSelection: true,
+        });
+    };
+
+    return (
+        <ButtonLike
+            shape="underline"
+            onClick={handleGetMoreLicense}
+            loading={loadingSubscriptionModal}
+            className="color-weak p-0"
+        >
+            {
+                // translator: full sentence is: Helps write, reply to, and proofread emails. If disabled only administrators will have access. Manage for individual users in <Users and addresses> or <add more seats>
+                c('Action (Scribe)').t`add more seats`
+            }
+        </ButtonLike>
+    );
+};
+
+export const AccessToggleScribe = () => {
+    const api = useApi();
+    const dispatch = useDispatch();
+    const [organization] = useOrganization();
+    const { createNotification } = useNotifications();
+
+    const isScribeAdminSettingFeatureEnabled = useFlag('ScribeAdminSetting');
+    const scribeToLumo = useFlag('ScribeToLumo');
+    const { paymentsEnabled } = useAssistantFeatureEnabled();
+
+    const [scribeLoading, withScribeLoading] = useLoading();
+
+    const handleToggleScribe = async () => {
+        const organizationSettings = await api<OrganizationSettings>(
+            updateOrganizationSettings({
+                ShowScribeWritingAssistant: !organization?.Settings.ShowScribeWritingAssistant,
+            })
+        );
+        dispatch(organizationActions.updateOrganizationSettings({ value: organizationSettings }));
+
+        createNotification({ text: c('Success notification').t`Preferences updated` });
+    };
+
+    if (!(paymentsEnabled && isScribeAdminSettingFeatureEnabled)) {
+        return null;
+    }
+
+    const addMoreSeats = <AddMoreSeats key="add-more-seats-link" />;
+    const userAndAddresses = <UserAndAddresses key="user-and-addresses-link" />;
+
+    return (
+        <AccessToggle
+            id="scribe-toggle"
+            icon={
+                scribeToLumo ? (
+                    <img src={lumoIcon} alt="" width={24} height={24} />
+                ) : (
+                    <IcPenSparks className="color-weak" size={6} />
+                )
+            }
+            title={getWritingAssistantTitle(scribeToLumo)}
+            checked={!!organization?.Settings.ShowScribeWritingAssistant}
+            loading={scribeLoading}
+            onChange={() => withScribeLoading(handleToggleScribe())}
+        >
+            <p className="m-0 text-sm">
+                {
+                    // translator: full sentence is: Helps write, reply to, and proofread emails. If disabled only administrators will have access. Manage for individual users in <Users and addresses> or <add more seats>
+                    c('Info (Scribe)')
+                        .jt`Helps write, reply to, and proofread emails. If disabled only administrators will have access. Manage for individual users in ${userAndAddresses} or ${addMoreSeats}`
+                }
+            </p>
+        </AccessToggle>
+    );
+};

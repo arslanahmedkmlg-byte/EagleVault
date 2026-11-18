@@ -1,0 +1,176 @@
+import { render, waitFor } from '@testing-library/react';
+import type { Mock } from 'vitest';
+
+import { useUserSettings } from '@proton/account/userSettings/hooks';
+import useLoading from '@proton/hooks/useLoading';
+import { getConnectionInformation } from '@proton/shared/lib/api/core/connection-information';
+// eslint-disable-next-line proton/restricted-imports
+import { getSilentApi } from '@proton/shared/lib/api/helpers/customConfig';
+
+import VPNDrawerContainer from './VPNDrawerContainer';
+import useVPNDrawerTelemetry from './useVPNDrawerTelemetry';
+
+// Mock dependencies
+vi.mock('@proton/shared/lib/api/core/connection-information');
+vi.mock('@proton/shared/lib/api/helpers/customConfig');
+vi.mock('@proton/account/userSettings/hooks');
+vi.mock('@proton/app-context/useApi');
+vi.mock('@proton/hooks/useLoading');
+vi.mock('./useVPNDrawerTelemetry');
+
+describe('VPNDrawerContainer', () => {
+    // Mock response data
+    const mockConnectionInfo = {
+        IsVpnConnection: false,
+        IspProvider: 'Orange',
+        Ip: '123.456.789.0',
+        CountryCode: 'FR',
+    };
+
+    // Mock implementations
+    const mockGetConnectionInformation = vi.fn(() => ({ url: 'connection-info' }));
+    const mockSilentApi = vi.fn().mockResolvedValue(mockConnectionInfo);
+    const mockStatusChanged = vi.fn();
+    const mockUserSettings = vi.fn();
+    const mockUseLoading = vi.fn();
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+
+        // Setup mocks
+        (getConnectionInformation as Mock).mockImplementation(mockGetConnectionInformation);
+        (getSilentApi as Mock).mockReturnValue(mockSilentApi);
+        (useVPNDrawerTelemetry as Mock).mockReturnValue({
+            downloadIsClicked: vi.fn(),
+            statusChanged: mockStatusChanged,
+        });
+        (useUserSettings as Mock).mockReturnValue([mockUserSettings, false]);
+        (useLoading as Mock).mockReturnValue([false, mockUseLoading]);
+        // Mock window events
+        window.addEventListener = vi.fn();
+        window.removeEventListener = vi.fn();
+    });
+
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+    });
+
+    it('should fetch connection information when component mounts', async () => {
+        render(<VPNDrawerContainer />);
+
+        await waitFor(() => {
+            expect(mockGetConnectionInformation).toHaveBeenCalledTimes(1);
+        });
+        expect(mockSilentApi).toHaveBeenCalledTimes(1);
+    });
+
+    it('should fetch connection information every minute', async () => {
+        render(<VPNDrawerContainer />);
+
+        // Initial call
+        await waitFor(() => {
+            expect(mockGetConnectionInformation).toHaveBeenCalledTimes(1);
+        });
+        expect(mockSilentApi).toHaveBeenCalledTimes(1);
+
+        // Advance timer by one minute
+        vi.advanceTimersByTime(60 * 1000);
+
+        await waitFor(() => {
+            expect(mockGetConnectionInformation).toHaveBeenCalledTimes(2);
+        });
+        expect(mockSilentApi).toHaveBeenCalledTimes(2);
+
+        // Advance timer by another minute
+        vi.advanceTimersByTime(60 * 1000);
+
+        await waitFor(() => {
+            expect(mockGetConnectionInformation).toHaveBeenCalledTimes(3);
+        });
+        expect(mockSilentApi).toHaveBeenCalledTimes(3);
+    });
+
+    it('should add event listeners for "focus" and "online" events', () => {
+        render(<VPNDrawerContainer />);
+
+        expect(window.addEventListener).toHaveBeenCalledTimes(2);
+        expect(window.addEventListener).toHaveBeenCalledWith('focus', expect.any(Function));
+        expect(window.addEventListener).toHaveBeenCalledWith('online', expect.any(Function));
+    });
+
+    it('should fetch connection information when window comes online', async () => {
+        render(<VPNDrawerContainer />);
+
+        await waitFor(() => {
+            expect(mockSilentApi).toHaveBeenCalledTimes(1);
+        });
+
+        // Extract the event handler function that was registered
+        const onlineHandler = (window.addEventListener as Mock).mock.calls.find((call) => call[0] === 'online')![1];
+
+        // Manually trigger the online event
+        onlineHandler();
+
+        await waitFor(() => {
+            expect(mockGetConnectionInformation).toHaveBeenCalledTimes(2);
+        });
+        expect(mockSilentApi).toHaveBeenCalledTimes(2);
+    });
+
+    it('should fetch connection information when window gets focus', async () => {
+        render(<VPNDrawerContainer />);
+
+        await waitFor(() => {
+            expect(mockSilentApi).toHaveBeenCalledTimes(1);
+        });
+
+        // Extract the focus handler function
+        const focusHandler = (window.addEventListener as Mock).mock.calls.find((call) => call[0] === 'focus')![1];
+
+        // Manually trigger the focus event
+        focusHandler();
+
+        await waitFor(() => {
+            expect(mockGetConnectionInformation).toHaveBeenCalledTimes(2);
+        });
+        expect(mockSilentApi).toHaveBeenCalledTimes(2);
+    });
+
+    it('should cleanup event listeners and intervals on unmount', () => {
+        const { unmount } = render(<VPNDrawerContainer />);
+
+        unmount();
+
+        expect(window.removeEventListener).toHaveBeenCalledTimes(2);
+        expect(window.removeEventListener).toHaveBeenCalledWith('focus', expect.any(Function));
+        expect(window.removeEventListener).toHaveBeenCalledWith('online', expect.any(Function));
+    });
+
+    it('should call statusChanged when connection information changes', async () => {
+        // First render to set initial state
+        render(<VPNDrawerContainer />);
+
+        // Wait for initial fetch
+        await waitFor(() => {
+            expect(mockSilentApi).toHaveBeenCalledTimes(1);
+        });
+
+        // Change the mock response for the second call
+        const updatedConnectionInfo = {
+            ...mockConnectionInfo,
+            IsVpnConnection: true,
+        };
+        mockSilentApi.mockResolvedValueOnce(updatedConnectionInfo);
+
+        // Trigger another fetch (e.g., by focus event)
+        const focusHandler = (window.addEventListener as Mock).mock.calls.find((call) => call[0] === 'focus')![1];
+        focusHandler();
+
+        await waitFor(() => {
+            expect(mockSilentApi).toHaveBeenCalledTimes(2);
+        });
+        expect(mockStatusChanged).toHaveBeenCalled();
+    });
+});

@@ -1,0 +1,32 @@
+[package]
+name = "proton-pass-totp"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+doctest = false
+
+[features]
+uniffi = ["dep:uniffi"]
+serde = []
+wasm = ["serde", "dep:tsify", "dep:wasm-bindgen"]
+
+[dependencies]
+uniffi = { workspace = true, optional = true }
+tsify = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+proton-pass-derive = { path = "../proton-pass-derive" }
+
+serde.workspace = true
+
+serde-querystring = "0.3.0"
+totp-rs = "5.6.0"
+url = "2.5.4"
+urlencoding = "2.1.3"
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "totp_generation"
+harness = false

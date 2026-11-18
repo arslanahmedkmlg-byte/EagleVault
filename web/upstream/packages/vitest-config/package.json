@@ -1,0 +1,27 @@
+{
+    "name": "@proton/vitest-config",
+    "description": "Shared vitest configuration for workspace packages",
+    "type": "module",
+    "exports": {
+        "./setLocation": "./src/setLocation.ts",
+        "./shared": "./src/shared.ts"
+    },
+    "scripts": {
+        "check:types": "tsc --checkers 1",
+        "lint": "oxlint --quiet",
+        "lint:fix": "pnpm run lint --fix"
+    },
+    "devDependencies": {
+        "@proton/oxlint-config": "workspace:^",
+        "@types/node": "catalog:",
+        "@types/webpack-env": "catalog:",
+        "@typescript/native": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    },
+    "peerDependencies": {
+        "vitest": "^5.1.0"
+    }
+}

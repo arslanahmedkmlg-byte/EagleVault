@@ -1,6 +1,10 @@
-# Web integration
+# Web client
 
-The first transport milestone is implemented in src/api/vaultwarden-client.ts. It currently covers:
+The Proton Pass Web application and its shared workspace packages are imported in upstream/. The unrelated Proton Web applications, browser extension and desktop app are excluded.
+
+EagleVault-specific transport: src/api/vaultwarden-client.ts.
+
+Current transport operations:
 - GET /api/sync
 - POST /api/ciphers
 - PUT /api/ciphers/{id}
@@ -10,7 +14,9 @@ The first transport milestone is implemented in src/api/vaultwarden-client.ts. I
 - PUT /api/folders/{id}
 - DELETE /api/folders/{id}
 
-The transport does not perform login, token refresh, crypto, data mapping, persistence or UI integration. The caller supplies a current access token. These are deliberate seams: identity and crypto must be verified against the pinned server/client implementation before they are added.
+The transport does not perform login, token refresh, crypto, data mapping, persistence or UI integration. The caller supplies a current access token. These are deliberate seams pending source audit and API contract tests.
 
-Run the current transport tests from repository root:
+Run transport tests from repository root:
 node --experimental-strip-types --test tests/contracts/vaultwarden-client.test.mjs
+
+The full Proton Web app is not yet built or wired to the new transport. Source commit: docs/UPSTREAM-IMPORTS.md.

@@ -1,0 +1,682 @@
+/// <reference path="./desktop-window.d.ts" />
+import { useEffect, useState } from 'react';
+
+import type { ChatCompletionsFlatFunctionTool, ChatCompletionsFunctionTool } from '../types-api';
+import type { ClientToolExecutor, ClientToolResult, PendingClientToolCall, ToolFileAttachment } from './client-tools';
+import type { LumoApiClientConfig } from './types';
+
+/** Result payload matching connector-bridge executeToolCall output. */
+type NativeToolResultMessage = {
+    role: 'tool';
+    tool_call_id: string | null;
+    name: string;
+    content: string;
+    fileTransfer?: unknown;
+    is_error?: boolean;
+};
+
+export type ScheduleToolContext = { connectionId: string; runId: string };
+export type ScheduleExecutionInput = {
+    runId: string;
+    connectorIds: string[];
+    autoApprove: boolean;
+    readOnlyConnectorIds?: string[];
+};
+
+export type DesktopExternalTools = {
+    scheduleExecutionCapabilities?: { readOnlyConnectors?: boolean };
+    completeFileRead?: (resultId: string, value: unknown) => Promise<unknown>;
+    registerScheduleExecutionContext?: (input: ScheduleExecutionInput) => Promise<ScheduleToolContext>;
+    ready?: Promise<void>;
+    getTools?: () => ChatCompletionsFlatFunctionTool[] | ChatCompletionsFunctionTool[];
+    getFlatApiTools?: () => ChatCompletionsFlatFunctionTool[];
+    isNativeTool?: (name: string) => boolean;
+    executeToolCall?: (
+        toolCall: {
+            id?: string;
+            function?: { name?: string; arguments?: string };
+            name?: string;
+            arguments?: string;
+        },
+        scheduleContext?: ScheduleToolContext,
+        options?: DesktopToolCallOptions
+    ) => Promise<NativeToolResultMessage>;
+    executeToolCalls?: (
+        toolCalls: {
+            id?: string;
+            function?: { name?: string; arguments?: string };
+            name?: string;
+            arguments?: string;
+        }[],
+        scheduleContext?: ScheduleToolContext,
+        options?: DesktopToolCallOptions
+    ) => Promise<NativeToolResultMessage[]>;
+};
+
+/** Older desktop builds ignore these and track untrusted content per session instead. */
+export type DesktopToolCallOptions = {
+    conversationId?: string;
+};
+
+/** Connector manifest as returned by the desktop bridge (get_tool_registry). */
+export type DesktopConnector = {
+    id: string;
+    display_name: string;
+    description?: string;
+    icon?: string | null;
+    /** Defaults to enabled when omitted by a gateway manifest. Only explicit false disables the connector. */
+    enabled?: boolean;
+    /** Optional desktop settings restriction. */
+    read_only?: boolean;
+    readiness?: { state: 'ready' } | { state: 'blocked'; reason: string };
+    status: { state: 'ready' } | { state: 'warning'; error: string } | { state: 'not_ready'; reason: string };
+    tools?: { name: string; title?: string; description?: string; read_only?: boolean }[];
+    /** Desktop catalog category. Absent on older desktop builds. */
+    category?: string;
+    /** MCP server id (the connector id without `mcp-`). Absent on older desktop builds. */
+    server_id?: string;
+    /** Endpoint of an HTTP MCP connector. Absent on older desktop builds. */
+    url?: string;
+};
+
+/** A connector the desktop app can set up, whether or not the user has added it. */
+export type DesktopCatalogEntry = {
+    id: string;
+    server_id?: string;
+    category: string;
+    name: string;
+    description: string;
+    icon?: string;
+    url?: string;
+    /** Absent on older desktop builds. Catalog membership never grants tool access. */
+    registered?: boolean;
+    enabled?: boolean;
+    readiness?: DesktopConnector['readiness'];
+    status?: DesktopConnector['status'];
+    tools?: DesktopConnector['tools'];
+};
+
+export type DesktopConnectorCatalog = {
+    categories: { id: string; label: string }[];
+    connectors: DesktopCatalogEntry[];
+};
+
+export type DesktopFeatureFlags = {
+    experimentalConnectors: boolean;
+};
+
+export type DesktopExportPdfOptions = {
+    fileName: string;
+    title?: string;
+};
+
+/** `cancelled` means the user dismissed the native Save dialog. */
+export type DesktopExportPdfResult = { status: 'saved' | 'cancelled' | 'failed' };
+
+export type LumoConnectorsApi = DesktopExternalTools & {
+    /** Native PDF export (macOS desktop builds only): absent on older builds, Windows and Linux. */
+    exportPdf?: (html: string, options: DesktopExportPdfOptions) => Promise<DesktopExportPdfResult>;
+    getOpenAITools?: () => ChatCompletionsFunctionTool[];
+    ensureOpenAIToolShape?: (
+        tool: ChatCompletionsFunctionTool | ChatCompletionsFlatFunctionTool
+    ) => ChatCompletionsFunctionTool;
+    isAvailableTool?: (name: string) => boolean;
+    getConnectors?: () => DesktopConnector[];
+    getManifests?: () => DesktopConnector[];
+    setConnectorEnabled?: (connectorId: string, enabled: boolean) => Promise<void>;
+    /** `always`: auto-approve this tool from now on; untrusted content still makes it ask. Older desktop builds ignore it. */
+    respondToolApproval?: (requestId: string, approved: boolean, always?: boolean) => Promise<void>;
+    /** Older desktop builds ignore `connectorId` and open the tab. */
+    openSettings?: (tab?: DesktopSettingsTab, connectorId?: string) => Promise<void>;
+    getCatalog?: () => DesktopConnectorCatalog;
+    setFeatureFlags?: (flags: DesktopFeatureFlags) => Promise<void>;
+};
+
+export type DesktopSettingsTab = 'general' | 'connectors';
+
+/** Why native is asking: the conversation read untrusted content and this call can send data out or change files. */
+export type DesktopToolApprovalReason = {
+    /**
+     * `untrusted_write`: the call changes files on the user's computer rather than sending data out.
+     * `hidden_text`: the call would send invisible characters, shown in its input as `[U+XXXX]`.
+     */
+    kind: 'untrusted_content' | 'untrusted_write' | 'hidden_text';
+    /**
+     * `service`: what a connected service such as Slack or Jira returned.
+     * `connector`: tool descriptions from an MCP server the user added themselves.
+     */
+    sources: ('mail' | 'web' | 'shell' | 'service' | 'connector')[];
+    /** Host the request goes to, when native can tell. */
+    destination?: string;
+};
+
+export type DesktopToolApprovalRequest = {
+    requestId: string;
+    connectorId: string;
+    toolName: string;
+    input: unknown;
+    /** Absent when the tool asks by policy, and on older desktop builds. */
+    reason?: DesktopToolApprovalReason;
+};
+
+/** Native's resolution of a request the webview may still be showing (timeout, policy change, …). */
+export type DesktopToolApprovalResolved = {
+    requestId: string;
+    approved?: boolean;
+};
+
+export const TOOL_APPROVAL_REQUEST_EVENT = 'lumo:tool-approval-request';
+export const TOOL_APPROVAL_RESOLVED_EVENT = 'lumo:tool-approval-resolved';
+
+function getDesktopBridge(): DesktopExternalTools | null {
+    return window.__TAURI__?.external_tools ?? window.LumoConnectors ?? null;
+}
+
+function supportsDesktopFileProcessing(): boolean {
+    return typeof window !== 'undefined' && typeof getDesktopBridge()?.completeFileRead === 'function';
+}
+
+export function prepareDesktopToolFileReads(calls: PendingClientToolCall[]): PendingClientToolCall[] {
+    if (!supportsDesktopFileProcessing()) return calls;
+    return calls.map((call) => {
+        if (!['filesystem__fs_read', 'filesystem_fs_read'].includes(call.name)) return call;
+        try {
+            const args = JSON.parse(call.arguments || '{}');
+            if (
+                !args ||
+                typeof args !== 'object' ||
+                Array.isArray(args) ||
+                args.start !== undefined ||
+                args.end !== undefined ||
+                args.format !== undefined
+            ) {
+                return call;
+            }
+            return { ...call, arguments: JSON.stringify({ ...args, format: 'file' }) };
+        } catch {
+            return call;
+        }
+    });
+}
+
+/** Bound converted output using the same account-scoped store as other native tools. */
+export async function completeDesktopFileRead(resultId: string, value: unknown): Promise<ClientToolResult> {
+    const bridge = typeof window === 'undefined' ? null : getDesktopBridge();
+    if (!bridge?.completeFileRead) throw new Error('Update Lumo Desktop to process local file attachments.');
+    const result = await bridge.completeFileRead(resultId, value);
+    return { content: typeof result === 'string' ? result : JSON.stringify(result) };
+}
+
+/** Native envelope decoding and receipt IDs stay inside the desktop adapter. */
+function decodeDesktopToolFile(value: unknown): ToolFileAttachment {
+    const file = value as Record<string, unknown> | null;
+    const maxBytes = 5 * 1024 * 1024;
+    if (
+        !file ||
+        file.type !== 'lumo_file' ||
+        typeof file.file_id !== 'string' ||
+        !file.file_id ||
+        file.file_id.length > 256 ||
+        typeof file.result_id !== 'string' ||
+        !file.result_id ||
+        file.result_id.length > 256 ||
+        typeof file.path !== 'string' ||
+        file.path.length > 8192 ||
+        typeof file.name !== 'string' ||
+        !file.name ||
+        file.name.length > 1024 ||
+        typeof file.mime_type !== 'string' ||
+        file.mime_type.length > 256 ||
+        typeof file.binary !== 'boolean' ||
+        typeof file.size !== 'number' ||
+        !Number.isSafeInteger(file.size) ||
+        file.size < 0 ||
+        file.size > maxBytes ||
+        typeof file.data !== 'string' ||
+        file.data.length > Math.ceil(maxBytes / 3) * 4 ||
+        file.data.length % 4 !== 0 ||
+        /[^A-Za-z0-9+/=]/.test(file.data)
+    ) {
+        throw new Error('Invalid file transfer or file exceeds the 5 MiB desktop read limit.');
+    }
+    const bytes = atob(file.data);
+    if (bytes.length !== file.size) throw new Error('Incomplete file transfer.');
+    const receipt = file.result_id;
+    return {
+        file: {
+            id: file.file_id,
+            path: file.path,
+            name: file.name,
+            mimeType: file.mime_type,
+            binary: file.binary,
+            data: Uint8Array.from(bytes, (char) => char.charCodeAt(0)),
+        },
+        onProcessed: async (result) => {
+            if (result.images?.length) {
+                await completeDesktopFileRead(receipt, { ...result.images[0], type: 'lumo_file_image' });
+                return result;
+            }
+            // Converted processor output, never raw tool text.
+            let converted: unknown = result.content;
+            try {
+                converted = JSON.parse(result.content);
+            } catch {
+                /* Plain text is also supported. */
+            }
+            return { ...result, ...(await completeDesktopFileRead(receipt, converted)) };
+        },
+    };
+}
+
+/** Translate trusted bridge metadata into the platform-independent executor contract. */
+export function normalizeDesktopToolResult(
+    result: Pick<NativeToolResultMessage, 'content' | 'fileTransfer' | 'is_error'>
+): ClientToolResult {
+    const plain = { content: result.content, is_error: result.is_error };
+    if (result.fileTransfer === undefined) return plain;
+    try {
+        const value = result.fileTransfer as Record<string, unknown> | null;
+        if (!value || typeof value !== 'object') throw new Error('Invalid file transport metadata.');
+        if (value.type === 'lumo_file' && !result.is_error) {
+            return { content: '', files: [decodeDesktopToolFile(value)] };
+        }
+        if (value.type !== 'lumo_tool_result' || !Array.isArray(value.files) || value.files.length > 10) {
+            throw new Error('Invalid multimodal tool result.');
+        }
+        let isError = result.is_error || value.isError === true;
+        const text = typeof value.text === 'string' ? value.text : JSON.stringify(value.text ?? '');
+        const parts = isError ? ['[Tool reported isError=true]', text] : [text];
+        const files: ToolFileAttachment[] = [];
+        for (const file of value.files) {
+            try {
+                files.push(decodeDesktopToolFile(file));
+            } catch (error) {
+                parts.push(
+                    JSON.stringify({ error: error instanceof Error ? error.message : 'Invalid file transfer.' })
+                );
+                isError = true;
+            }
+        }
+        return { content: parts.join('\n'), files, is_error: isError };
+    } catch (error) {
+        return {
+            content: JSON.stringify({ error: error instanceof Error ? error.message : 'Invalid file transfer.' }),
+            is_error: true,
+        };
+    }
+}
+
+export function getDesktopConnectorsApi(): LumoConnectorsApi | null {
+    return window.LumoConnectors ?? null;
+}
+
+/** Reports frontend-evaluated flags when supported by the desktop bridge. */
+export async function setDesktopFeatureFlags(flags: DesktopFeatureFlags): Promise<void> {
+    await getDesktopConnectorsApi()?.setFeatureFlags?.(flags);
+}
+
+export async function respondDesktopToolApproval(requestId: string, approved: boolean, always = false): Promise<void> {
+    await getDesktopConnectorsApi()?.respondToolApproval?.(requestId, approved, always);
+}
+
+export async function openDesktopSettings(tab?: DesktopSettingsTab, connectorId?: string): Promise<void> {
+    await getDesktopConnectorsApi()?.openSettings?.(tab, connectorId);
+}
+
+/** Empty on the web and on desktop builds that predate the catalog. */
+export function getDesktopConnectorCatalog(): DesktopConnectorCatalog {
+    return getDesktopConnectorsApi()?.getCatalog?.() ?? { categories: [], connectors: [] };
+}
+
+/** All recommendation candidates, with manifest fallback for older desktop catalogs. */
+export async function getDesktopScheduleConnectors(): Promise<DesktopCatalogEntry[]> {
+    const api = getDesktopConnectorsApi();
+    await api?.ready;
+    const manifests = api?.getManifests?.() ?? [];
+    const entries = new Map(getDesktopConnectorCatalog().connectors.map((entry) => [entry.id, entry]));
+    for (const manifest of manifests) {
+        const preset = entries.get(manifest.id);
+        entries.set(manifest.id, {
+            ...preset,
+            id: manifest.id,
+            name: manifest.display_name,
+            description: manifest.description ?? preset?.description ?? '',
+            category: manifest.category ?? preset?.category ?? 'custom',
+            server_id: manifest.server_id ?? preset?.server_id,
+            registered: true,
+            enabled: manifest.enabled !== false,
+            readiness: manifest.readiness,
+            status: manifest.status,
+            tools: manifest.tools ?? preset?.tools ?? [],
+        });
+    }
+    return [...entries.values()];
+}
+
+export function isDesktopEnvironment(): boolean {
+    return typeof window !== 'undefined' && getDesktopBridge() !== null;
+}
+
+/** Older desktop builds may ignore unknown registration fields; require explicit support. */
+export function supportsDesktopScheduleReadOnly(): boolean {
+    return (
+        typeof window !== 'undefined' && getDesktopBridge()?.scheduleExecutionCapabilities?.readOnlyConnectors === true
+    );
+}
+
+/** Opt in to the desktop tool bridge when running inside the Lumo Desktop shell. */
+export function getDesktopLumoApiClientConfig(): Pick<LumoApiClientConfig, 'enableDesktopTools'> {
+    return {
+        enableDesktopTools: isDesktopEnvironment(),
+    };
+}
+
+async function waitForDesktopTools(): Promise<void> {
+    const bridge = getDesktopBridge();
+    if (!bridge?.ready) {
+        return;
+    }
+    await bridge.ready;
+}
+
+export async function getDesktopOpenAITools(): Promise<ChatCompletionsFunctionTool[]> {
+    const bridge = getDesktopBridge();
+    if (!bridge) {
+        return [];
+    }
+    await waitForDesktopTools();
+    return ((bridge as LumoConnectorsApi).getOpenAITools?.() ?? bridge.getTools?.() ?? []).map(
+        (tool): ChatCompletionsFunctionTool => {
+            if ('type' in tool && tool.type === 'function') {
+                return tool;
+            }
+            const flatTool = tool as ChatCompletionsFlatFunctionTool;
+            return {
+                type: 'function',
+                function: {
+                    name: flatTool.name,
+                    description: flatTool.description ?? '',
+                    parameters: flatTool.parameters ?? { type: 'object', properties: {} },
+                },
+            };
+        }
+    );
+}
+
+export async function getDesktopConnectors(): Promise<DesktopConnector[]> {
+    const api = getDesktopConnectorsApi();
+    if (!api) {
+        return [];
+    }
+    if (api.ready) {
+        await api.ready;
+    }
+    return api.getConnectors?.() ?? api.getManifests?.() ?? [];
+}
+
+export async function getDesktopManifests(): Promise<DesktopConnector[]> {
+    const api = getDesktopConnectorsApi();
+    if (!api) {
+        return [];
+    }
+    if (api.ready) {
+        await api.ready;
+    }
+    return api.getManifests?.() ?? [];
+}
+
+export async function setDesktopConnectorEnabled(connectorId: string, enabled: boolean): Promise<void> {
+    await window.LumoConnectors?.setConnectorEnabled?.(connectorId, enabled);
+}
+
+/** Subscribe to connector/tool changes emitted by the bridge. Returns an unsubscribe fn. */
+export function subscribeDesktopConnectors(callback: () => void): () => void {
+    window.addEventListener('lumo:tools-changed', callback);
+    return () => window.removeEventListener('lumo:tools-changed', callback);
+}
+
+/** Loads connector manifests from the desktop bridge and refreshes when connectors change. */
+export function useDesktopManifests(): {
+    manifests: DesktopConnector[];
+    status: 'loading' | 'ready' | 'error';
+} {
+    const [state, setState] = useState<{
+        manifests: DesktopConnector[];
+        status: 'loading' | 'ready' | 'error';
+    }>({ manifests: [], status: 'loading' });
+
+    useEffect(() => {
+        let currentCounter = 0;
+
+        const load = async () => {
+            const requestCounter = ++currentCounter;
+            try {
+                const api = getDesktopConnectorsApi();
+                await api?.ready;
+                const manifests = api?.getManifests?.() ?? [];
+                if (requestCounter === currentCounter) {
+                    setState({ manifests, status: 'ready' });
+                }
+            } catch {
+                if (requestCounter === currentCounter) {
+                    setState((prev) => ({ ...prev, status: 'error' }));
+                }
+            }
+        };
+
+        const unsubscribe = subscribeDesktopConnectors(() => {
+            void load();
+        });
+
+        void load();
+
+        return () => {
+            // Ignore pending loads after unmount, just as we ignore superseded loads.
+            ++currentCounter;
+            unsubscribe();
+        };
+    }, []);
+
+    return state;
+}
+
+export function isDesktopNativeTool(name: string): boolean {
+    const bridge = getDesktopBridge();
+    if (!bridge) {
+        return false;
+    }
+    const api = bridge as LumoConnectorsApi;
+    return api.isNativeTool?.(name) ?? api.isAvailableTool?.(name) ?? false;
+}
+
+/** Map common model hallucinations to registered desktop tool names. */
+const DESKTOP_TOOL_ALIASES: Record<string, string> = {
+    browser_fetch: 'browser__fetch',
+    browser_navigate: 'browser__navigate',
+    filesystem_fs_read: 'filesystem__fs_read',
+    filesystem_fs_search: 'filesystem__fs_search',
+};
+
+function normalizeDesktopToolName(name: string): string {
+    return DESKTOP_TOOL_ALIASES[name] ?? name;
+}
+
+function normalizeDesktopToolCalls(calls: PendingClientToolCall[]): PendingClientToolCall[] {
+    return calls.map((call) => ({
+        ...call,
+        name: normalizeDesktopToolName(call.name),
+    }));
+}
+
+async function executeBridgeToolCalls(
+    toolCalls: PendingClientToolCall[],
+    scheduleContext?: ScheduleToolContext,
+    options?: DesktopToolCallOptions
+): Promise<NativeToolResultMessage[]> {
+    const bridge = getDesktopBridge();
+    if (!bridge) {
+        throw new Error('Desktop tools are not available');
+    }
+    await waitForDesktopTools();
+
+    const openAiCalls = toolCalls.map((call) => ({
+        id: call.id,
+        function: {
+            name: call.name,
+            arguments: call.arguments,
+        },
+    }));
+
+    if (bridge.executeToolCalls) {
+        return bridge.executeToolCalls(openAiCalls, scheduleContext, options);
+    }
+
+    if (bridge.executeToolCall) {
+        return Promise.all(openAiCalls.map((call) => bridge.executeToolCall!(call, scheduleContext, options)));
+    }
+
+    throw new Error('Desktop tool bridge does not support execution');
+}
+
+type ApprovalListener = () => void;
+
+const APPROVAL_FALLBACK_TIMEOUT_MS = 130_000;
+
+let pendingApprovals: readonly DesktopToolApprovalRequest[] = [];
+const approvalListeners = new Set<ApprovalListener>();
+const approvalTimers = new Map<string, ReturnType<typeof setTimeout>>();
+let approvalListenerAttached = false;
+
+function emitApprovals() {
+    for (const listener of approvalListeners) {
+        listener();
+    }
+}
+
+function clearApprovalTimer(requestId: string) {
+    const timer = approvalTimers.get(requestId);
+    if (timer !== undefined) {
+        clearTimeout(timer);
+        approvalTimers.delete(requestId);
+    }
+}
+
+/** Drop a pending card without answering native — used when native has already resolved the request. */
+function removeToolApproval(requestId: string): void {
+    clearApprovalTimer(requestId);
+    const next = pendingApprovals.filter((entry) => entry.requestId !== requestId);
+    if (next.length !== pendingApprovals.length) {
+        pendingApprovals = next;
+        emitApprovals();
+    }
+}
+
+export function getPendingToolApprovals(): readonly DesktopToolApprovalRequest[] {
+    return pendingApprovals;
+}
+
+export function subscribeToolApprovals(listener: ApprovalListener): () => void {
+    approvalListeners.add(listener);
+    return () => {
+        approvalListeners.delete(listener);
+    };
+}
+
+export function enqueueToolApproval(request: DesktopToolApprovalRequest): void {
+    if (pendingApprovals.some((entry) => entry.requestId === request.requestId)) {
+        return;
+    }
+    pendingApprovals = [...pendingApprovals, request];
+    if (typeof setTimeout !== 'undefined') {
+        approvalTimers.set(
+            request.requestId,
+            setTimeout(() => removeToolApproval(request.requestId), APPROVAL_FALLBACK_TIMEOUT_MS)
+        );
+    }
+    emitApprovals();
+}
+
+export function resolveToolApproval(requestId: string, approved: boolean, always = false): void {
+    clearApprovalTimer(requestId);
+    const next = pendingApprovals.filter((entry) => entry.requestId !== requestId);
+    if (next.length !== pendingApprovals.length) {
+        pendingApprovals = next;
+        emitApprovals();
+    }
+    void respondDesktopToolApproval(requestId, approved, always).catch((error) => {
+        console.warn('failed to record tool approval decision; the core will time out', error);
+    });
+}
+
+function handleApprovalRequest(event: WindowEventMap['lumo:tool-approval-request']) {
+    const detail = event.detail;
+    if (detail?.requestId) {
+        enqueueToolApproval(detail);
+    }
+}
+
+// Native resolved a request the webview may still be showing (timeout, policy change, connector
+// disabled, …). Drop the card without answering back — native has already moved on.
+function handleApprovalResolved(event: WindowEventMap['lumo:tool-approval-resolved']) {
+    const detail = event.detail;
+    if (detail?.requestId) {
+        removeToolApproval(detail.requestId);
+    }
+}
+
+export function initDesktopToolApprovals(): void {
+    if (approvalListenerAttached || typeof window === 'undefined' || !isDesktopEnvironment()) {
+        return;
+    }
+    approvalListenerAttached = true;
+    window.addEventListener(TOOL_APPROVAL_REQUEST_EVENT, handleApprovalRequest);
+    window.addEventListener(TOOL_APPROVAL_RESOLVED_EVENT, handleApprovalResolved);
+}
+
+export function createDesktopClientToolExecutor(
+    schedule?: ScheduleExecutionInput,
+    options?: DesktopToolCallOptions
+): ClientToolExecutor {
+    initDesktopToolApprovals();
+    // Capture permissions once for this executor; never mutate shared bridge or global policies.
+    const callOptions = options?.conversationId ? { conversationId: options.conversationId } : undefined;
+    const permissions = schedule
+        ? {
+              ...schedule,
+              connectorIds: [...schedule.connectorIds],
+              ...(schedule.readOnlyConnectorIds && { readOnlyConnectorIds: [...schedule.readOnlyConnectorIds] }),
+          }
+        : undefined;
+    let registration: Promise<ScheduleToolContext> | undefined;
+    const registerContext = () => {
+        if (!permissions) return Promise.resolve(undefined);
+        if (!registration) {
+            registration = (async () => {
+                await waitForDesktopTools();
+                const bridge = getDesktopBridge();
+                if (permissions.readOnlyConnectorIds?.length && !supportsDesktopScheduleReadOnly()) {
+                    throw new Error('Update Lumo Desktop to run scheduled tasks with read-only connector access.');
+                }
+                if (!bridge?.registerScheduleExecutionContext) {
+                    throw new Error('Desktop does not support scheduled tool approval contexts');
+                }
+                return bridge.registerScheduleExecutionContext(permissions);
+            })();
+        }
+        return registration;
+    };
+
+    return {
+        getClientTools: async () => {
+            await registerContext();
+            return getDesktopOpenAITools();
+        },
+        canExecute: isDesktopNativeTool,
+        normalizeCalls: normalizeDesktopToolCalls,
+        prepareCalls: (calls, { processFiles }) => (processFiles ? prepareDesktopToolFileReads(calls) : calls),
+        execute: async (calls) => {
+            const results = await executeBridgeToolCalls(calls, await registerContext(), callOptions);
+            return results.map(normalizeDesktopToolResult);
+        },
+    };
+}

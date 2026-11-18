@@ -1,0 +1,92 @@
+use proton_pass_common::share::{Share as CommonShare, TargetType as CommonTargetType, visible_share_ids};
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum TargetType {
+    Vault,
+    Item,
+}
+
+impl From<CommonTargetType> for TargetType {
+    fn from(t: CommonTargetType) -> Self {
+        match t {
+            CommonTargetType::Vault => Self::Vault,
+            CommonTargetType::Item => Self::Item,
+        }
+    }
+}
+
+impl From<TargetType> for CommonTargetType {
+    fn from(t: TargetType) -> Self {
+        match t {
+            TargetType::Vault => Self::Vault,
+            TargetType::Item => Self::Item,
+        }
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct Share {
+    pub share_id: String,
+    pub vault_id: String,
+    pub target_type: TargetType,
+    pub target_id: String,
+    pub role_id: String,
+    pub permissions: u16,
+    pub flags: u16,
+    pub user_is_vault_owner: bool,
+    pub is_group_share: bool,
+    pub create_time: u32,
+}
+
+impl From<CommonShare> for Share {
+    fn from(s: CommonShare) -> Self {
+        Self {
+            share_id: s.share_id,
+            vault_id: s.vault_id,
+            target_type: TargetType::from(s.target_type),
+            target_id: s.target_id,
+            role_id: s.role,
+            permissions: s.permissions,
+            flags: s.flags,
+            user_is_vault_owner: s.user_is_vault_owner,
+            is_group_share: s.is_group_share,
+            create_time: s.create_time,
+        }
+    }
+}
+
+impl From<Share> for CommonShare {
+    fn from(s: Share) -> Self {
+        Self {
+            share_id: s.share_id,
+            vault_id: s.vault_id,
+            target_type: CommonTargetType::from(s.target_type),
+            target_id: s.target_id,
+            role: s.role_id,
+            permissions: s.permissions,
+            flags: s.flags,
+            user_is_vault_owner: s.user_is_vault_owner,
+            is_group_share: s.is_group_share,
+            create_time: s.create_time,
+        }
+    }
+}
+
+#[derive(uniffi::Object)]
+pub struct ShareOverrideCalculator;
+
+#[uniffi::export]
+impl ShareOverrideCalculator {
+    #[uniffi::constructor]
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn get_visible_shares(&self, shares: Vec<Share>, filter_hidden: bool) -> Vec<String> {
+        let common_shares: Vec<CommonShare> = shares.into_iter().map(CommonShare::from).collect();
+        visible_share_ids(&common_shares, filter_hidden)
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect()
+    }
+}

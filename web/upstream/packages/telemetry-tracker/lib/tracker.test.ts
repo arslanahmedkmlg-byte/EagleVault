@@ -1,0 +1,371 @@
+import { vi } from 'vitest';
+
+import { TelemetryAccountImportFlowEvents, TelemetryMeasurementGroups } from '@proton/shared/lib/api/telemetry';
+import { sendTelemetryReport } from '@proton/shared/lib/helpers/metrics';
+import * as sentry from '@proton/shared/lib/helpers/sentry';
+import type { Api } from '@proton/shared/lib/interfaces/Api';
+import { telemetry } from '@proton/shared/lib/telemetry';
+
+import { mockTracker } from '../testing';
+import { defineContext } from './context';
+import { defineEvent } from './defineEvent';
+import { allowed, bool, duration, number, topValues } from './dimensions';
+import { defineTimer } from './timers';
+import { NOT_INITIALIZED_MESSAGE, initTracker, setTrackerInstance, tracker } from './tracker';
+
+vi.mock('@proton/shared/lib/helpers/metrics', () => ({ sendTelemetryReport: vi.fn() }));
+vi.mock('@proton/shared/lib/telemetry', () => ({ telemetry: { sendCustomEvent: vi.fn() } }));
+vi.mock('@proton/shared/lib/helpers/sentry', () => ({ captureMessage: vi.fn(), traceError: vi.fn() }));
+
+const group = TelemetryMeasurementGroups.accountImportFlow;
+const event = TelemetryAccountImportFlowEvents.stepCompleted;
+
+const simpleEvent = defineEvent({
+    target: 'telemetry',
+    group,
+    event,
+    dimensions: {
+        source: allowed(['settings', 'sidebar']),
+        provider: topValues(),
+        isBYOE: bool(),
+    },
+    values: { count: number() },
+});
+
+const funnelTimer = defineTimer('funnel');
+const funnelEvent = defineEvent({
+    target: 'telemetry',
+    group,
+    event,
+    dimensions: { step: allowed(['done']) },
+    values: { durationMs: duration() },
+});
+const noInputEvent = defineEvent({ target: 'telemetry', group, event });
+
+const api: Api = vi.fn();
+
+describe('tracker', () => {
+    afterEach(() => {
+        setTrackerInstance(undefined);
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+        vi.clearAllMocks();
+    });
+
+    describe('before init', () => {
+        it('warns once and does not throw outside of production', () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            expect(() => tracker.emit(noInputEvent)).not.toThrow();
+            expect(() => tracker.startTimer(funnelTimer)).not.toThrow();
+            expect(warn).toHaveBeenCalledTimes(1);
+            expect(warn).toHaveBeenCalledWith(NOT_INITIALIZED_MESSAGE);
+        });
+
+        it('does nothing in production', () => {
+            const env = process.env.NODE_ENV;
+            process.env.NODE_ENV = 'production';
+            try {
+                expect(() => tracker.emit(noInputEvent)).not.toThrow();
+                expect(() => tracker.emit(noInputEvent)).not.toThrow();
+                expect(sendTelemetryReport).not.toHaveBeenCalled();
+            } finally {
+                process.env.NODE_ENV = env;
+            }
+        });
+    });
+
+    describe('emit', () => {
+        it('serialises booleans as strings, keeps values numeric, delays by default', () => {
+            initTracker({ api });
+            tracker.emit(simpleEvent, {
+                dimensions: { source: 'settings', provider: 'gmail', isBYOE: true },
+                values: { count: 3 },
+            });
+
+            expect(sendTelemetryReport).toHaveBeenCalledWith({
+                api,
+                measurementGroup: group,
+                event,
+                dimensions: { source: 'settings', provider: 'gmail', isBYOE: 'true' },
+                values: { count: 3 },
+                delay: true,
+                flushImmediately: false,
+            });
+        });
+
+        it('sends false as the string "false"', () => {
+            const { reports, restore } = mockTracker();
+            tracker.emit(simpleEvent, {
+                dimensions: { source: 'sidebar', provider: 'x', isBYOE: false },
+                values: { count: 0 },
+            });
+            expect(reports[0].dimensions?.isBYOE).toBe('false');
+            restore();
+        });
+
+        it('allows overriding the delay per event and per call', () => {
+            const { reports } = mockTracker();
+            const noDelay = defineEvent({ target: 'telemetry', group, event, delay: false });
+            tracker.emit(noDelay);
+            tracker.emit(noDelay, undefined, { delay: true });
+            expect(reports.map((r) => r.delay)).toEqual([false, true]);
+        });
+
+        it('never throws when sending fails', () => {
+            initTracker({ api });
+            vi.mocked(sendTelemetryReport).mockImplementationOnce(() => {
+                throw new Error('boom');
+            });
+            expect(() => tracker.emit(noInputEvent)).not.toThrow();
+            expect(sentry.traceError).toHaveBeenCalled();
+        });
+    });
+
+    describe('targets', () => {
+        const analyticsOnly = defineEvent({
+            target: 'analytics',
+            name: 'test.analytics',
+            dimensions: { isBYOE: bool() },
+            values: { count: number() },
+        });
+        const both = defineEvent({
+            target: 'both',
+            group,
+            event,
+            name: 'test.both',
+            dimensions: { isBYOE: bool() },
+        });
+        const input = { dimensions: { isBYOE: true }, values: { count: 2 } };
+
+        it('routes an analytics event to Proton analytics only, keeping typed values', () => {
+            initTracker({ api });
+            tracker.emit(analyticsOnly, input);
+            expect(telemetry.sendCustomEvent).toHaveBeenCalledWith('test.analytics', { isBYOE: true, count: 2 });
+            expect(sendTelemetryReport).not.toHaveBeenCalled();
+        });
+
+        it('routes a telemetry event to Telemetry only', () => {
+            initTracker({ api });
+            tracker.emit(noInputEvent);
+            expect(sendTelemetryReport).toHaveBeenCalledTimes(1);
+            expect(telemetry.sendCustomEvent).not.toHaveBeenCalled();
+        });
+
+        it('routes a "both" event to the two, each with its own serialisation', () => {
+            initTracker({ api });
+            tracker.emit(both, { dimensions: { isBYOE: true } });
+            expect(sendTelemetryReport).toHaveBeenCalledWith(
+                expect.objectContaining({ dimensions: { isBYOE: 'true' }, event })
+            );
+            expect(telemetry.sendCustomEvent).toHaveBeenCalledWith('test.both', { isBYOE: true });
+        });
+
+        it('still sends to analytics when Telemetry throws', () => {
+            initTracker({ api });
+            vi.mocked(sendTelemetryReport).mockImplementationOnce(() => {
+                throw new Error('boom');
+            });
+            tracker.emit(both, { dimensions: { isBYOE: false } });
+            expect(telemetry.sendCustomEvent).toHaveBeenCalled();
+            expect(sentry.traceError).toHaveBeenCalled();
+        });
+
+        it('records both targets with mockTracker', () => {
+            const { reports, analyticsEvents, restore } = mockTracker();
+            tracker.emit(both, { dimensions: { isBYOE: true } });
+            expect(reports).toHaveLength(1);
+            expect(analyticsEvents).toEqual([{ name: 'test.both', data: { isBYOE: true } }]);
+            restore();
+        });
+
+        it('requires the fields of the chosen target', () => {
+            // @ts-expect-error telemetry needs group and event
+            defineEvent({ target: 'telemetry' });
+            // @ts-expect-error analytics needs a name
+            defineEvent({ target: 'analytics' });
+            // @ts-expect-error both needs group, event and name
+            defineEvent({ target: 'both', name: 'x' });
+        });
+    });
+
+    describe('types', () => {
+        it('rejects invalid input at compile time', () => {
+            const { restore } = mockTracker();
+            const ok = { source: 'settings', provider: 'x', isBYOE: true } as const;
+            const values = { count: 1 };
+            // @ts-expect-error source not in the allowed list
+            tracker.emit(simpleEvent, { dimensions: { ...ok, source: 'nope' }, values });
+            // @ts-expect-error boolean dimension must be a boolean
+            tracker.emit(simpleEvent, { dimensions: { ...ok, isBYOE: 'true' }, values });
+            // @ts-expect-error input is required when the event has dimensions
+            tracker.emit(simpleEvent);
+            restore();
+        });
+    });
+
+    describe('timers', () => {
+        const input = { dimensions: { step: 'done' } } as const;
+
+        it('adds a rounded duration only when durationFrom is passed', () => {
+            vi.spyOn(performance, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(3400.4);
+            const { reports } = mockTracker();
+
+            tracker.startTimer(funnelTimer);
+            tracker.emit(funnelEvent, input);
+            tracker.emit(funnelEvent, input, { durationFrom: funnelTimer });
+
+            expect(reports.map((r) => r.values)).toEqual([{}, { durationMs: 2400 }]);
+        });
+
+        it('omits the duration when the timer was never started, and when cancelled', () => {
+            const { reports } = mockTracker();
+            tracker.emit(funnelEvent, input, { durationFrom: funnelTimer });
+            tracker.startTimer(funnelTimer);
+            tracker.cancelTimer(funnelTimer);
+            tracker.emit(funnelEvent, input, { durationFrom: funnelTimer });
+            expect(reports.map((r) => r.values)).toEqual([{}, {}]);
+        });
+
+        it('keeps the original start unless restarted, and stopTimer removes it', () => {
+            const now = vi.spyOn(performance, 'now');
+            const { reports } = mockTracker();
+            now.mockReturnValueOnce(0);
+            tracker.startTimer(funnelTimer);
+            tracker.startTimer(funnelTimer); // idempotent, does not read the clock again
+            now.mockReturnValueOnce(100);
+            tracker.emit(funnelEvent, input, { durationFrom: funnelTimer, stopTimer: true });
+            tracker.emit(funnelEvent, input, { durationFrom: funnelTimer });
+            expect(reports.map((r) => r.values)).toEqual([{ durationMs: 100 }, {}]);
+        });
+
+        it('resumes a timer that began earlier, and exposes the elapsed time', () => {
+            const now = vi.spyOn(performance, 'now');
+            const { reports } = mockTracker();
+            now.mockReturnValueOnce(5000);
+            tracker.startTimer(funnelTimer, { elapsedMs: 3000 });
+            now.mockReturnValueOnce(5500);
+            expect(tracker.getElapsed(funnelTimer)).toBe(3500);
+            now.mockReturnValueOnce(6000);
+            tracker.emit(funnelEvent, input, { durationFrom: funnelTimer });
+            expect(reports.map((r) => r.values)).toEqual([{ durationMs: 4000 }]);
+        });
+
+        it('only accepts durationFrom on events with a duration value', () => {
+            const { restore } = mockTracker();
+            const simple = {
+                dimensions: { source: 'settings', provider: 'x', isBYOE: true },
+                values: { count: 1 },
+            } as const;
+            // @ts-expect-error simpleEvent has no duration() value
+            tracker.emit(simpleEvent, simple, { durationFrom: funnelTimer });
+            // @ts-expect-error duration values cannot be passed manually
+            tracker.emit(funnelEvent, { ...input, values: { durationMs: 5 } });
+            restore();
+        });
+    });
+});
+
+describe('context values', () => {
+    it('reads numeric values at emit time and omits unknown and non-finite values for both targets', () => {
+        const context = defineContext<{ plan: string; accountAge: number | undefined }>({
+            plan: 'unknown',
+            accountAge: undefined,
+        });
+        const eventWithContext = defineEvent({
+            target: 'both',
+            group,
+            event,
+            name: 'context-test',
+            dimensions: { plan: context.dimension('plan') },
+            values: {
+                accountAge: context.value('accountAge'),
+                count: number(),
+            },
+        });
+        const mock = mockTracker();
+        tracker.emit(eventWithContext, { values: { count: 1 } });
+        context.set({ accountAge: 42 });
+        tracker.emit(eventWithContext, { values: { count: 2 } });
+        context.set({ accountAge: Infinity });
+        tracker.emit(eventWithContext, { values: { count: 3 } });
+        expect(mock.reports.map((report) => report.values)).toEqual([
+            { count: 1 },
+            { accountAge: 42, count: 2 },
+            { count: 3 },
+        ]);
+        expect(mock.analyticsEvents[1]).toEqual({
+            name: 'context-test',
+            data: { plan: 'unknown', accountAge: 42, count: 2 },
+        });
+        context.reset();
+        expect(context.get('accountAge')).toBeUndefined();
+        mock.restore();
+    });
+
+    it('enforces context key and emit input types', () => {
+        const context = defineContext({ plan: 'free', accountAge: 0 });
+        const eventWithContext = defineEvent({
+            target: 'telemetry',
+            group,
+            event,
+            values: { age: context.value('accountAge') },
+        });
+        const mock = mockTracker();
+        tracker.emit(eventWithContext);
+        // @ts-expect-error a context value is supplied by the tracker
+        tracker.emit(eventWithContext, { values: { age: 10 } });
+        defineEvent({
+            target: 'telemetry',
+            group,
+            event,
+            // @ts-expect-error numeric context values cannot be dimensions
+            dimensions: { age: context.value('accountAge') },
+        });
+        // @ts-expect-error numeric keys cannot be dimensions
+        context.dimension('accountAge');
+        // @ts-expect-error string keys cannot be numeric values
+        context.value('plan');
+        mock.restore();
+    });
+});
+
+describe('context dimensions', () => {
+    const testContext = defineContext({ plan: 'unknown' });
+    const contextEvent = defineEvent({
+        target: 'telemetry',
+        group,
+        event,
+        dimensions: {
+            step: allowed(['done']),
+            plan: testContext.dimension('plan'),
+        },
+    });
+
+    afterEach(() => testContext.reset());
+
+    it('fills the dimension from the latest context, not from the call site', () => {
+        const mock = mockTracker();
+        tracker.emit(contextEvent, { dimensions: { step: 'done' } });
+        testContext.set({ plan: 'bundle2022' });
+        tracker.emit(contextEvent, { dimensions: { step: 'done' } });
+        expect(mock.reports.map((r) => r.dimensions)).toEqual([
+            { step: 'done', plan: 'unknown' },
+            { step: 'done', plan: 'bundle2022' },
+        ]);
+        mock.restore();
+    });
+
+    it('cannot be passed from the call site', () => {
+        const mock = mockTracker();
+        // @ts-expect-error the context dimension is filled by the tracker
+        tracker.emit(contextEvent, { dimensions: { step: 'done', plan: 'forged' } });
+        expect(mock.reports[0].dimensions).toEqual({ step: 'done', plan: 'unknown' });
+        mock.restore();
+    });
+
+    it('keeps handles independent', () => {
+        const other = defineContext({ plan: 'other' });
+        testContext.set({ plan: 'x' });
+        expect(other.get('plan')).toBe('other');
+    });
+});

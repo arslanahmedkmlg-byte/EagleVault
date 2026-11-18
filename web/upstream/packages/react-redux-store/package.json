@@ -1,0 +1,20 @@
+{
+    "name": "@proton/react-redux-store",
+    "description": "Shared react redux store context",
+    "exports": {
+        "./ProtonStoreContext": "./ProtonStoreContext.ts"
+    },
+    "scripts": {
+        "lint": "oxlint --quiet"
+    },
+    "dependencies": {
+        "react": "catalog:",
+        "react-redux": "catalog:"
+    },
+    "devDependencies": {
+        "@proton/oxlint-config": "workspace:^",
+        "@types/react": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:"
+    }
+}

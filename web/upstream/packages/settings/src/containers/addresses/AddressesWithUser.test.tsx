@@ -1,0 +1,291 @@
+import type { ComponentPropsWithoutRef } from 'react';
+
+import { fireEvent, render, within } from '@testing-library/react';
+
+import { useAddressesKeys } from '@proton/account/addressKeys/hooks';
+import { orderAddresses } from '@proton/account/addresses/actions';
+import { useAddresses } from '@proton/account/addresses/hooks';
+import { useOrganizationKey } from '@proton/account/organizationKey/hooks';
+import { useUser } from '@proton/account/user/hooks';
+import { useUserSettings } from '@proton/account/userSettings/hooks';
+import { useNotifications } from '@proton/app-context/useNotifications';
+import { SortableList } from '@proton/components/components/dnd/SortableList';
+import useKTVerifier from '@proton/components/containers/keyTransparency/useKTVerifier';
+import useAddressFlags from '@proton/components/hooks/useAddressFlags';
+import { mockUseFeature } from '@proton/features/testing/mockUseFeature';
+import { useDispatch } from '@proton/redux-shared-store/sharedProvider';
+import { ADDRESS_FLAGS, ADDRESS_STATUS, ADDRESS_TYPE } from '@proton/shared/lib/constants';
+import type { Address } from '@proton/shared/lib/interfaces/Address';
+import type { UserModel } from '@proton/shared/lib/interfaces/User';
+import {
+    LOGIN_IDENTIFIER_POLICY,
+    RESTRICTED_LOGIN_IDENTIFIER_POLICY,
+    type UserSettings,
+} from '@proton/shared/lib/interfaces/UserSettings';
+import { useFlag } from '@proton/unleash/useFlag';
+
+import AddressesWithUser from './AddressesWithUser';
+
+jest.mock('@proton/components/hooks/useEventManager', () => () => ({}));
+
+jest.mock('@proton/components/components/upsell/config/useUpsellConfig', () => ({
+    __esModule: true,
+    default: () => ({}),
+}));
+
+jest.mock('@proton/components/hooks/mail/usePostSubscriptionTourTelemetry', () => ({
+    __esModule: true,
+    usePostSubscriptionTourTelemetry: () => {
+        return () => undefined;
+    },
+}));
+
+jest.mock('@proton/account/addresses/actions');
+const mockedOrderAddresses = orderAddresses as jest.MockedFunction<typeof orderAddresses>;
+
+jest.mock('@proton/redux-shared-store/sharedProvider');
+const mockedUseDispatch = useDispatch as jest.MockedFunction<typeof useDispatch>;
+
+jest.mock('@proton/shared/lib/helpers/ref', () => ({ __esModule: true, getUpsellRef: () => '' }));
+
+jest.mock('@proton/components/components/dnd/SortableList');
+const ActualSortableList = jest.requireActual('@proton/components/components/dnd/SortableList').SortableList;
+const mockedSortableList = SortableList as jest.MockedFunction<typeof SortableList>;
+
+jest.mock('@proton/account/addresses/hooks');
+const mockedUseAddresses = useAddresses as jest.MockedFunction<typeof useAddresses>;
+
+jest.mock('@proton/components/hooks/useAddressFlags');
+const mockedUseAddressFlags = useAddressFlags as jest.MockedFunction<typeof useAddressFlags>;
+
+jest.mock('@proton/app-context/useNotifications');
+const mockedUseNotifications = useNotifications as jest.MockedFunction<typeof useNotifications>;
+
+jest.mock('@proton/account/user/hooks');
+const mockedUseUser = useUser as jest.MockedFunction<typeof useUser>;
+
+jest.mock('@proton/account/userSettings/hooks');
+const mockedUseUserSettings = useUserSettings as jest.MockedFunction<typeof useUserSettings>;
+const mockLoginIdentifierPolicy = (LoginIdentifierPolicy: number) => {
+    mockedUseUserSettings.mockReturnValue([{ LoginIdentifierPolicy } as UserSettings, false, undefined]);
+};
+
+jest.mock('@proton/account/addressKeys/hooks');
+const mockedUseAddressesKeys = useAddressesKeys as jest.MockedFunction<typeof useAddressesKeys>;
+
+jest.mock('@proton/components/containers/keyTransparency/useKTVerifier');
+const mockedUseKTVerifier = useKTVerifier as jest.MockedFunction<typeof useKTVerifier>;
+
+jest.mock('@proton/unleash/useFlag');
+const mockedUseFlag = useFlag as jest.MockedFunction<any>;
+
+jest.mock('@proton/account/organizationKey/hooks');
+const mockedUseOrganizationKey = useOrganizationKey as jest.MockedFunction<typeof useOrganizationKey>;
+
+jest.mock('@proton/components/components/link/SettingsLink', () => 'string');
+
+jest.mock('@proton/redux-shared-store/sharedProvider');
+
+jest.mock('@proton/activation/src/hooks/useReconnectSync', () => ({
+    __esModule: true,
+    default: () => {
+        return {
+            sync: undefined,
+            loadingConfig: false,
+            handleReconnect: jest.fn(),
+        };
+    },
+}));
+
+jest.mock('@proton/byoe/src/hooks/useBYOEFeatureStatus', () => ({
+    __esModule: true,
+    default: () => {
+        return [false, false] as const;
+    },
+}));
+
+jest.mock('@proton/activation/src/hooks/useBYOEAddressesCounts', () => ({
+    __esModule: true,
+    default: () => {
+        return {
+            usedBYOEAddresses: 0,
+            maxBYOEAddresses: 0,
+        };
+    },
+}));
+
+describe('addresses with user', () => {
+    const user = { ID: 'abc', Flags: { 'has-a-byoe-address': false } } as UserModel;
+
+    const addresses = [
+        { ID: '1', Email: 'a@proton.me', Type: ADDRESS_TYPE.TYPE_ORIGINAL, Status: 1, Receive: 1, Send: 1, HasKeys: 1 },
+        { ID: '2', Email: 'a@foo.bar', Type: ADDRESS_TYPE.TYPE_EXTERNAL, Status: 1, Receive: 0, Send: 0, HasKeys: 1 },
+        {
+            ID: '3',
+            Email: 'a1@proton.me',
+            Type: ADDRESS_TYPE.TYPE_ALIAS,
+            Status: 1,
+            Receive: 1,
+            Send: 1,
+            HasKeys: 1,
+            Flags: ADDRESS_FLAGS.BYOE,
+        },
+        { ID: '4', Email: 'a2@pm.me', Type: ADDRESS_TYPE.TYPE_PREMIUM, Status: 0, Receive: 0, Send: 0, HasKeys: 1 },
+    ] as Address[];
+
+    mockedUseAddresses.mockReturnValue([addresses, false]);
+    mockedSortableList.mockImplementation(ActualSortableList);
+    mockedUseNotifications.mockReturnValue({} as any);
+    mockedUseUser.mockReturnValue([user] as any);
+    mockedUseAddressesKeys.mockReturnValue([{}] as any);
+    mockedUseKTVerifier.mockReturnValue({} as any);
+    mockedUseOrganizationKey.mockReturnValue([{}] as any);
+    mockedUseFlag.mockReturnValue(true);
+    mockLoginIdentifierPolicy(LOGIN_IDENTIFIER_POLICY.ALL);
+    mockedUseAddressFlags.mockReturnValue({
+        data: {
+            permissions: {} as any,
+        } as any,
+        handleSetAddressFlags: async () => {},
+    });
+    mockUseFeature({ feature: { Value: true } as any });
+
+    const getFirstAddress = (container: HTMLElement) => {
+        return container.querySelector('[data-testid^="users-and-addresses-table"]');
+    };
+
+    it('should be able to set an alias as default', async () => {
+        const mockDispatch = jest.fn();
+        mockedUseDispatch.mockReturnValue(mockDispatch);
+
+        const { getByTestId, getByText, container } = render(
+            <AddressesWithUser user={user} allowAddressDeletion={false} />
+        );
+
+        // Assumes that "Make default" is displayed on the address we're interested in
+        fireEvent.click(getByTestId('dropdownActions:dropdown'));
+        fireEvent.click(getByText('Set as default'));
+        const [address1, address2, address3, address4] = addresses;
+        expect(mockedOrderAddresses).toHaveBeenCalledWith({
+            addresses: [address3, address1, address2, address4],
+            member: undefined,
+        });
+        expect(getFirstAddress(container)?.textContent).toBe('a1@proton.me');
+    });
+
+    describe('set as default', () => {
+        const setup = () => {
+            const createNotification = jest.fn();
+            mockedUseNotifications.mockReturnValue({ createNotification } as any);
+            let onSortEnd: ComponentPropsWithoutRef<typeof SortableList>['onSortEnd'];
+            mockedSortableList.mockImplementation((props) => {
+                onSortEnd = props.onSortEnd;
+                return <ActualSortableList {...props} />;
+            });
+            const handleSortEnd: typeof onSortEnd = (...args) => {
+                onSortEnd?.(...args);
+            };
+            return { onSortEnd: handleSortEnd, createNotification };
+        };
+
+        it('should not be able to set an external address as default', () => {
+            const { onSortEnd, createNotification } = setup();
+            const { container } = render(<AddressesWithUser user={user} allowAddressDeletion={false} />);
+
+            onSortEnd({ newIndex: 0, oldIndex: 2 });
+            expect(createNotification).toHaveBeenCalledWith({
+                type: 'error',
+                text: 'An external address cannot be default',
+            });
+            expect(getFirstAddress(container)?.textContent).toBe('a@proton.me');
+        });
+
+        it('should not be able to set a disabled address as default', () => {
+            const { onSortEnd, createNotification } = setup();
+            const { container } = render(<AddressesWithUser user={user} allowAddressDeletion={false} />);
+
+            onSortEnd({ newIndex: 0, oldIndex: 3 });
+            expect(createNotification).toHaveBeenCalledWith({
+                type: 'error',
+                text: 'A disabled address cannot be default',
+            });
+            expect(getFirstAddress(container)?.textContent).toBe('a@proton.me');
+        });
+    });
+
+    describe('sign in only label', () => {
+        afterEach(() => {
+            mockedUseAddresses.mockReturnValue([addresses, false]);
+        });
+
+        it('should only label enabled external addresses', () => {
+            const disabledExternal = {
+                ...addresses[1],
+                ID: '5',
+                Email: 'b@foo.bar',
+                Status: ADDRESS_STATUS.STATUS_DISABLED,
+            };
+            mockedUseAddresses.mockReturnValue([[...addresses, disabledExternal], false]);
+
+            const { getByText } = render(<AddressesWithUser user={user} allowAddressDeletion={false} />);
+
+            const getLabel = (email: string) => within(getByText(email).closest('button')!).queryByText('Sign in only');
+            expect(getLabel('a@foo.bar')).not.toBeNull();
+            expect(getLabel('b@foo.bar')).toBeNull();
+        });
+    });
+
+    describe('sign-in restriction', () => {
+        const disabledOriginal = {
+            ...addresses[0],
+            ID: '6',
+            Email: 'a@protonmail.ch',
+            Status: ADDRESS_STATUS.STATUS_DISABLED,
+        };
+
+        const renderAddresses = () => {
+            mockedUseAddresses.mockReturnValue([[...addresses, disabledOriginal], false]);
+            const { getByText } = render(<AddressesWithUser user={user} allowAddressDeletion={false} />);
+            const getRow = (email: string) => within(getByText(email).closest('tr')!);
+            return {
+                getSignInPill: (email: string) => getRow(email).queryByText('Sign-in'),
+                getSignInOnlyLabel: (email: string) => getRow(email).queryByText('Sign in only'),
+            };
+        };
+
+        afterEach(() => {
+            mockedUseAddresses.mockReturnValue([addresses, false]);
+            mockedUseFlag.mockReturnValue(true);
+            mockLoginIdentifierPolicy(LOGIN_IDENTIFIER_POLICY.ALL);
+        });
+
+        it('marks only enabled original addresses and hides the sign in only label when restricted', () => {
+            mockLoginIdentifierPolicy(RESTRICTED_LOGIN_IDENTIFIER_POLICY);
+
+            const { getSignInPill, getSignInOnlyLabel } = renderAddresses();
+
+            expect(getSignInPill('a@proton.me')).not.toBeNull();
+            expect(getSignInPill('a@protonmail.ch')).toBeNull();
+            expect(getSignInPill('a@foo.bar')).toBeNull();
+            expect(getSignInPill('a1@proton.me')).toBeNull();
+            expect(getSignInOnlyLabel('a@foo.bar')).toBeNull();
+        });
+
+        it('keeps the current labels when not restricted', () => {
+            const { getSignInPill, getSignInOnlyLabel } = renderAddresses();
+
+            expect(getSignInPill('a@proton.me')).toBeNull();
+            expect(getSignInOnlyLabel('a@foo.bar')).not.toBeNull();
+        });
+
+        it('keeps the current labels when restricted but the flag is off', () => {
+            mockLoginIdentifierPolicy(RESTRICTED_LOGIN_IDENTIFIER_POLICY);
+            mockedUseFlag.mockReturnValue(false);
+
+            const { getSignInPill, getSignInOnlyLabel } = renderAddresses();
+
+            expect(getSignInPill('a@proton.me')).toBeNull();
+            expect(getSignInOnlyLabel('a@foo.bar')).not.toBeNull();
+        });
+    });
+});

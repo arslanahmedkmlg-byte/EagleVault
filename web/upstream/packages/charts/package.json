@@ -1,0 +1,53 @@
+{
+    "name": "@proton/charts",
+    "description": "Shared chart components: owns chart.js, its registration and theme colour resolution",
+    "license": "GPL-3.0",
+    "author": "",
+    "sideEffects": [
+        "./src/register.ts",
+        "./src/primitives/*.tsx"
+    ],
+    "type": "module",
+    "exports": {
+        "./ChartCard": "./src/presentation/ChartCard.tsx",
+        "./TrendChart": "./src/charts/TrendChart/TrendChart.tsx",
+        "./TrendChart.types": "./src/charts/TrendChart/TrendChart.types.ts"
+    },
+    "scripts": {
+        "check:types": "tsc --checkers 1",
+        "lint": "oxlint --quiet",
+        "test": "TZ=UTC vitest",
+        "test:ci": "pnpm run test --run",
+        "test:ui": "pnpm run test --ui",
+        "test:watch": "pnpm run test --watch"
+    },
+    "dependencies": {
+        "@proton/atoms": "workspace:^",
+        "@proton/components": "workspace:^",
+        "@proton/utils": "workspace:^",
+        "chart.js": "^4.6.1",
+        "react": "catalog:",
+        "react-chartjs-2": "^5.3.1"
+    },
+    "devDependencies": {
+        "@proton/oxlint-config": "workspace:^",
+        "@proton/styles": "workspace:^",
+        "@proton/vitest-config": "workspace:^",
+        "@testing-library/dom": "catalog:",
+        "@testing-library/jest-dom": "catalog:",
+        "@testing-library/react": "catalog:",
+        "@types/react": "catalog:",
+        "@types/react-dom": "catalog:",
+        "@types/webpack-env": "catalog:",
+        "@typescript/native": "catalog:",
+        "@vitejs/plugin-react": "catalog:",
+        "@vitest/coverage-v8": "catalog:",
+        "@vitest/ui": "catalog:",
+        "happy-dom": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
+        "react-dom": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    }
+}

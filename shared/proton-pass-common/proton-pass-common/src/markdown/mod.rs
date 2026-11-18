@@ -1,0 +1,58 @@
+mod cursor;
+mod document;
+mod editor;
+mod list_operations;
+mod list_parsing;
+mod newline;
+mod operations;
+mod parser;
+mod renderer;
+mod undo;
+mod utf16;
+
+#[cfg(test)]
+mod tests;
+
+pub use document::{
+    MarkdownDocument, MarkdownLink, MarkdownLinkScheme, MarkdownNode, MarkdownNodeId, MarkdownNodeKind,
+    MarkdownUnsafeLinkReason, classify_markdown_link,
+};
+pub use editor::MarkdownEditor;
+pub use parser::{MarkdownParseLimits, parse_markdown_document, parse_markdown_document_with_limits};
+pub use renderer::{SpanStyle, StyledSpan, render_editor_spans};
+
+use proton_pass_derive::Error;
+
+/// Operations that can be applied to markdown text
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    Bold,
+    Italic,
+    Strikethrough,
+    Header(u8), // 1-6
+    CreateOrderedList,
+    CreateUnorderedList,
+    IndentList,
+    UnindentList,
+    Blockquote,
+    InlineCode,
+    CreateCodeBlock,
+    CreateLink,
+}
+
+/// Errors that can occur during markdown operations
+#[derive(Debug, Error)]
+pub enum MarkdownError {
+    InvalidCursorPosition(String),
+    InvalidSelection(String),
+    InvalidHeaderLevel(String),
+    InvalidOperation(String),
+    ParsingError(String),
+    DocumentTooLarge(String),
+    TooDeep(String),
+    TooManyNodes(String),
+    PayloadTooLarge(String),
+    InvalidLink(String),
+}
+
+pub type Result<T> = std::result::Result<T, MarkdownError>;

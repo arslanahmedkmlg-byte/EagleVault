@@ -1,0 +1,132 @@
+import { matches } from '@proton/mail-message/helpers/dom';
+import { getUTMTrackersFromURL } from '@proton/shared/lib/mail/trackers';
+import type { MessageUTMTracker } from '@proton/shared/lib/models/mailUtmTrackers';
+
+const PROTOCOLS = ['ftp://', 'http://', 'https://', 'xmpp:', 'tel:', 'callto:'];
+const ALL_PROTOCOLS = PROTOCOLS.concat(['mailto:']);
+const MAP = PROTOCOLS.reduce<{ [key: string]: boolean }>((acc, key) => {
+    acc[key] = true;
+    return acc;
+}, {});
+const EXCLUDE_ANCHORS = ':not([href=""]):not([href^="#"])';
+
+const getNormalizedHref = (link: HTMLLinkElement) => {
+    return (link.getAttribute('href') || '').trim().toLowerCase();
+};
+
+const linkUsesProtocols = (link: HTMLLinkElement) =>
+    ALL_PROTOCOLS.some((proto) => getNormalizedHref(link).startsWith(proto));
+
+const isEmptyAnchor = (link: HTMLLinkElement) => {
+    const href = getNormalizedHref(link);
+    return href === '' || MAP[href];
+};
+
+const noReferrerInfo = (link: HTMLLinkElement) => {
+    link.setAttribute('rel', 'noreferrer nofollow noopener');
+};
+
+/**
+ * flatten the text content of the link and check if there is a long run without natural breaking opportunities
+ */
+const LONG_UNBREAKABLE_LINK_TEXT_THRESHOLD = 30;
+
+const detectLongUnbreakableContent = (link: HTMLLinkElement) => {
+    const text = link.textContent ?? '';
+
+    // Split only with normal spaces
+    const segments = text.split(/ +/).filter(Boolean);
+
+    const maxRun = segments.reduce((max, segment) => Math.max(max, segment.length), 0);
+
+    return maxRun > LONG_UNBREAKABLE_LINK_TEXT_THRESHOLD;
+};
+
+const transformLinksWithLongUnbreakableContent = (link: HTMLLinkElement) => {
+    if (detectLongUnbreakableContent(link)) {
+        // add in style attribute a word-break: break-word;
+        link.style.wordBreak = 'break-word';
+    }
+};
+
+/**
+ * Open every link in a new tab.
+ *
+ * The message is written in an inframe
+ */
+const openInNewTab = (link: HTMLLinkElement) => {
+    if (matches(link, EXCLUDE_ANCHORS) && !getNormalizedHref(link).startsWith('mailto:')) {
+        link.setAttribute('target', '_blank');
+    }
+};
+
+/**
+ * turn these relative links into absolute links
+ * (example.com/a -> http://example.com)
+ */
+const sanitizeRelativeHttpLinks = (link: HTMLLinkElement) => {
+    if (matches(link, EXCLUDE_ANCHORS) && !linkUsesProtocols(link) && link.nodeName === 'A') {
+        // link.href is the absolute value of the link: mail.proton.me is prepended, use getAttribute
+        const url = link.getAttribute('href');
+
+        if (url) {
+            link.setAttribute('href', `https://${url}`);
+        }
+    }
+};
+
+const removeTrackingTokens = (link: HTMLLinkElement) => {
+    if (matches(link, EXCLUDE_ANCHORS) && link.nodeName === 'A') {
+        const href = link.getAttribute('href');
+
+        if (href) {
+            const result = getUTMTrackersFromURL(href);
+
+            if (result) {
+                link.setAttribute('href', result.url);
+                return result?.utmTracker;
+            }
+        }
+    }
+};
+
+/*
+ * Anchors will work on the whole protonmail page, so we need to disable them
+ * opening them in a new tab will just open a empty page.
+ */
+const disableAnchors = (link: HTMLLinkElement) => {
+    if (isEmptyAnchor(link)) {
+        link.style.pointerEvents = 'none';
+    }
+};
+
+export const transformLinks = (
+    document: Element,
+    onCleanUTMTrackers: (utmTrackers: MessageUTMTracker[]) => void,
+    canCleanUTMTrackers: boolean
+) => {
+    const links = [...document.querySelectorAll('[href]')] as HTMLLinkElement[];
+
+    const utmTrackers: MessageUTMTracker[] = [];
+
+    links.forEach((link) => {
+        transformLinksWithLongUnbreakableContent(link);
+        sanitizeRelativeHttpLinks(link);
+        openInNewTab(link);
+        noReferrerInfo(link);
+
+        if (canCleanUTMTrackers) {
+            const tracker = removeTrackingTokens(link);
+
+            if (tracker) {
+                utmTrackers.push(tracker);
+            }
+        }
+
+        disableAnchors(link);
+    });
+
+    if (utmTrackers.length > 0) {
+        onCleanUTMTrackers(utmTrackers);
+    }
+};

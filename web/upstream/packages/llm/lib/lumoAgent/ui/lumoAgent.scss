@@ -1,0 +1,145 @@
+.lumo-agent-panel {
+	// The assistant's column: replies and the tool rows above them share this width and this text inset,
+	// so a row's label starts on the reply's text and its chevron lands on the reply's trailing edge.
+	--lumo-agent-column: 90%;
+	--lumo-agent-inset: 0.875rem;
+
+	display: flex;
+	flex-direction: column;
+	block-size: 100%;
+	min-block-size: 0;
+}
+
+.lumo-agent-transcript {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+	padding: 1rem;
+}
+
+.lumo-agent-bubble {
+	padding-block: 0.625rem;
+	padding-inline: var(--lumo-agent-inset);
+	border-radius: var(--border-radius-lg, 0.75rem);
+	max-inline-size: 85%;
+	white-space: pre-wrap;
+	word-break: break-word;
+
+	&.is-user {
+		align-self: flex-end;
+		border-end-end-radius: var(--border-radius-sm);
+		background: var(--interaction-norm-minor-1);
+		color: var(--text-norm);
+
+		// Dark themes have no purple token between minor-1 (darker than the reply bubble) and the solid norm.
+		[data-theme-mode='dark'] & {
+			background: color-mix(in srgb, var(--interaction-norm) 35%, var(--background-norm));
+		}
+	}
+}
+
+// Assistant reply: a soft neutral bubble hugging the left, two-tone (colour + alignment) against the
+// purple user bubble opposite it. Trim the markdown renderer's outer block margins.
+.lumo-agent-reply {
+	align-self: flex-start;
+	max-inline-size: var(--lumo-agent-column);
+	min-inline-size: 0;
+	padding-block: 0.625rem;
+	padding-inline: var(--lumo-agent-inset);
+	border-radius: var(--border-radius-lg, 0.75rem);
+	border-end-start-radius: var(--border-radius-sm);
+	background: var(--background-weak, rgb(0 0 0 / 0.04));
+	color: var(--text-norm);
+	overflow-wrap: break-word;
+
+	> :first-child {
+		margin-block-start: 0;
+	}
+
+	> :last-child {
+		margin-block-end: 0;
+	}
+
+	h1 {
+		margin-block: 1.5rem 0.75rem;
+		font-size: 1.5rem;
+		font-weight: var(--font-weight-bold);
+		line-height: 1.3;
+	}
+
+	h2 {
+		margin-block: 1.25rem 0.625rem;
+		font-size: 1.25rem;
+		font-weight: var(--font-weight-semibold);
+		line-height: 1.3;
+	}
+
+	h3 {
+		margin-block: 1rem 0.5rem;
+		font-size: 1.125rem;
+		font-weight: var(--font-weight-semibold);
+		line-height: 1.4;
+	}
+
+	h4,
+	h5,
+	h6 {
+		margin-block: 0.875rem 0.375rem;
+		font-size: 1rem;
+		font-weight: var(--font-weight-semibold);
+		line-height: 1.4;
+	}
+}
+
+.lumo-agent-tool-row {
+	align-self: flex-start;
+	inline-size: var(--lumo-agent-column);
+	min-inline-size: 0;
+	padding-inline: var(--lumo-agent-inset);
+}
+
+// Idle Lumo cat mark beneath the latest turn (left-aligned, in the reply column).
+.lumo-agent-avatar {
+	align-self: flex-start;
+}
+
+// Composer framing: padding so the rounded input never sits flush to the drawer edges.
+.lumo-agent-composer {
+	padding: 0.75rem;
+}
+
+.lumo-agent-error {
+	align-self: flex-start;
+	inline-size: var(--lumo-agent-column);
+	padding-block: 0.5rem;
+	padding-inline: 0.75rem;
+	border-radius: 0.5rem;
+	color: var(--signal-danger, #cc2d2d);
+	background: var(--signal-danger-minor-1, rgb(204 45 45 / 0.08));
+}
+
+// A settled action reports an outcome, so it is outlined on the panel surface rather than filled like a
+// reply bubble — it must never read as something Lumo said. It carries the column's shared inset itself
+// rather than relying on `.lumo-agent-tool-row` for it, so the border never sits flush to the title.
+.lumo-agent-result-tile {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding-block: 0.375rem;
+	padding-inline: var(--lumo-agent-inset);
+	border: 1px solid var(--border-weak);
+	border-radius: var(--border-radius-lg, 0.75rem);
+	background: var(--background-norm);
+
+	&.is-cancelled {
+		opacity: 0.6;
+	}
+
+	// A settled action is the row's own message, not a footnote on a reply, so it drops the weak grey the
+	// disclosure gives the transparency chips.
+	.lumo-disclosure__summary {
+		color: var(--text-norm);
+	}
+}

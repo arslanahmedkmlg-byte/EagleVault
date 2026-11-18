@@ -1,0 +1,233 @@
+import { getOrgPermissions } from '@proton/account/userPermissions';
+import type { NavResolved } from '@proton/nav/types/nav';
+import { FREE_SUBSCRIPTION, PLANS } from '@proton/payments/core/constants';
+import { EntitlementName } from '@proton/payments/core/entitlements/entitlement-names';
+import type { Entitlement } from '@proton/payments/core/entitlements/interface';
+import { EntitlementScope, EntitlementType } from '@proton/payments/core/entitlements/interface';
+import { createEntitlementResolverForOrgAndUser } from '@proton/payments/core/entitlements/resolver';
+import { buildEntitlementCatalog } from '@proton/payments/testing/buildEntitlementCatalog';
+import { buildSubscription } from '@proton/payments/testing/buildSubscription';
+import { makeEntitlements } from '@proton/payments/testing/makeEntitlements';
+import { regularAdmin } from '@proton/payments/testing/regularAdmin';
+import { APPS, ORGANIZATION_STATE } from '@proton/shared/lib/constants';
+import type { OrganizationExtended } from '@proton/shared/lib/interfaces/Organization';
+import type { UserModel } from '@proton/shared/lib/interfaces/User';
+import type { OrgPermissions } from '@proton/shared/lib/interfaces/UserPermission';
+import { buildUser } from '@proton/shared/testing/buildUser';
+
+import { findNavItem, resolveNavigation } from './routes';
+
+const findNavItemById = vi.hoisted(() => vi.fn());
+
+vi.mock('@proton/nav/api/findNavItem', () => ({
+    findNavItemById,
+}));
+
+const nav = { items: [] } as NavResolved;
+
+describe('findNavItem', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('returns undefined when nothing is found', () => {
+        findNavItemById.mockReturnValue(undefined);
+        expect(findNavItem(nav, 'my-vpn.download-apps')).toBeUndefined();
+    });
+
+    it('delegates to findNavItemById and returns the matched item', () => {
+        const item = { id: 'my-vpn.download-apps', label: 'Downloads', sections: [] };
+        findNavItemById.mockReturnValue(item);
+
+        expect(findNavItem(nav, 'my-vpn.download-apps')).toBe(item);
+        expect(findNavItemById).toHaveBeenCalledWith(nav, 'my-vpn.download-apps');
+    });
+});
+
+describe('resolveNavigation', () => {
+    const orgSwitch = (Name: EntitlementName): Entitlement => ({
+        Name,
+        Quantity: 1,
+        Type: EntitlementType.Switch,
+        Scope: EntitlementScope.Organization,
+    });
+
+    const entitlementCatalog = buildEntitlementCatalog({
+        [PLANS.VPN_BUSINESS]: [
+            EntitlementName.Business,
+            EntitlementName.FlagsVpn,
+            EntitlementName.MaxDedicatedIps,
+            EntitlementName.VpnLocationFilter,
+            EntitlementName.ActivityMonitorVpn,
+        ],
+        [PLANS.VPN2024]: [EntitlementName.FlagsVpn],
+    });
+
+    const b2bEntitlements = createEntitlementResolverForOrgAndUser({
+        entitlementCatalog,
+        entitlements: makeEntitlements([
+            orgSwitch(EntitlementName.Business),
+            orgSwitch(EntitlementName.FlagsVpn),
+            orgSwitch(EntitlementName.MaxDedicatedIps),
+            orgSwitch(EntitlementName.VpnLocationFilter),
+            orgSwitch(EntitlementName.ActivityMonitorVpn),
+        ]),
+        subscriptions: [buildSubscription(PLANS.VPN_BUSINESS)],
+        ...regularAdmin,
+    });
+
+    const b2cEntitlements = createEntitlementResolverForOrgAndUser({
+        entitlementCatalog,
+        entitlements: makeEntitlements([orgSwitch(EntitlementName.FlagsVpn)]),
+        subscriptions: [buildSubscription(PLANS.VPN2024)],
+        ...regularAdmin,
+    });
+
+    const b2bOrganization = {
+        Name: 'org',
+        PlanName: PLANS.VPN_BUSINESS,
+        State: ORGANIZATION_STATE.ACTIVE,
+        RequiresKey: 1,
+        HasKeys: 1,
+        MaxMembers: 10,
+        Settings: { VideoConferencingEnabled: false },
+    } as OrganizationExtended;
+
+    const b2cOrganization = {
+        Name: '',
+        PlanName: PLANS.VPN2024,
+        State: ORGANIZATION_STATE.ACTIVE,
+        RequiresKey: 0,
+        HasKeys: 0,
+        MaxMembers: 1,
+        Settings: { VideoConferencingEnabled: false },
+    } as OrganizationExtended;
+
+    const buildArgs = (
+        user: UserModel,
+        permissions: OrgPermissions,
+        org = { organization: b2bOrganization, entitlements: b2bEntitlements }
+    ) => ({
+        user,
+        ...org,
+        permissions,
+        subscription: FREE_SUBSCRIPTION,
+        allSubscriptions: [],
+        flags: { B2BAlwaysOnEnabled: true },
+        context: {
+            isDataRecoveryAvailable: true,
+            isSessionRecoveryAvailable: true,
+            appName: APPS.PROTONACCOUNT,
+        },
+    });
+
+    const member = buildUser({ isAdmin: false, isMember: true, isFree: false, isPaid: true });
+    const admin = buildUser({ isAdmin: true, isMember: false, isFree: false, isPaid: true });
+
+    it('hides the organization group from a member who holds no permission', () => {
+        const nav = resolveNavigation(buildArgs(member, getOrgPermissions([], false)));
+
+        expect(nav.items.map((item) => item.id)).not.toContain('organization');
+    });
+
+    it('shows the organization group to an admin who holds a single permission', () => {
+        const nav = resolveNavigation(buildArgs(admin, getOrgPermissions(['account.dashboard.read'], false)));
+
+        expect(nav.items.map((item) => item.id)).toContain('organization');
+    });
+
+    it('hides the organization group and its dashboard from a b2c admin who holds every permission', () => {
+        const nav = resolveNavigation(
+            buildArgs(admin, getOrgPermissions([], true), {
+                organization: b2cOrganization,
+                entitlements: b2cEntitlements,
+            })
+        );
+
+        expect(nav.items.map((item) => item.id)).toEqual(['my-account', 'my-vpn']);
+    });
+
+    type NavNode = { id: string; children?: NavNode[] };
+    const collectIds = (nodes: NavNode[]): string[] =>
+        nodes.flatMap((node) => [node.id, ...collectIds(node.children ?? [])]);
+
+    const vpnProEntitlements = createEntitlementResolverForOrgAndUser({
+        entitlementCatalog: buildEntitlementCatalog({
+            [PLANS.VPN_PRO]: [EntitlementName.Business, EntitlementName.FlagsVpn],
+        }),
+        entitlements: makeEntitlements([orgSwitch(EntitlementName.Business), orgSwitch(EntitlementName.FlagsVpn)]),
+        subscriptions: [buildSubscription(PLANS.VPN_PRO)],
+        ...regularAdmin,
+    });
+
+    it.each([
+        { name: 'a VPN Business admin', entitlements: b2bEntitlements },
+        { name: 'a VPN Essentials admin, who gets the upgrade banner', entitlements: vpnProEntitlements },
+    ])('shows Gateways to $name with the gateway permission', ({ entitlements }) => {
+        const nav = resolveNavigation(
+            buildArgs(admin, getOrgPermissions(['account.gateway.read'], false), {
+                organization: b2bOrganization,
+                entitlements,
+            })
+        );
+
+        expect(collectIds(nav.items as NavNode[])).toContain('organization.vpn.gateways');
+    });
+
+    it('hides Gateways from a VPN Business admin without the gateway permission', () => {
+        const nav = resolveNavigation(buildArgs(admin, getOrgPermissions(['account.dashboard.read'], false)));
+
+        expect(collectIds(nav.items as NavNode[])).not.toContain('organization.vpn.gateways');
+    });
+
+    describe('single sign-on', () => {
+        const getOrganizationChildIds = (resolved: NavResolved) =>
+            resolved.items.find((item) => item.id === 'organization')?.children?.map((child) => child.id) ?? [];
+
+        const ssoPermissions = getOrgPermissions(['account.sso_config.read'], false);
+
+        const buildSsoEntitlements = (names: EntitlementName[], plan: PLANS) =>
+            createEntitlementResolverForOrgAndUser({
+                entitlementCatalog: buildEntitlementCatalog({ [plan]: names }),
+                entitlements: makeEntitlements(names.map(orgSwitch)),
+                subscriptions: [buildSubscription(plan)],
+                ...regularAdmin,
+            });
+
+        it('shows single sign-on when the organization has the sso entitlement', () => {
+            const nav = resolveNavigation({
+                ...buildArgs(admin, ssoPermissions, {
+                    organization: b2bOrganization,
+                    entitlements: buildSsoEntitlements(
+                        [EntitlementName.Business, EntitlementName.FlagsVpn, EntitlementName.Sso],
+                        PLANS.VPN_BUSINESS
+                    ),
+                }),
+                allSubscriptions: [buildSubscription(PLANS.VPN_BUSINESS)],
+            });
+
+            expect(getOrganizationChildIds(nav)).toContain('organization.sso');
+        });
+
+        it('shows single sign-on as an upsell to a vpnpro2023 subscription without the sso entitlement', () => {
+            const nav = resolveNavigation({
+                ...buildArgs(admin, ssoPermissions, {
+                    organization: { ...b2bOrganization, PlanName: PLANS.VPN_PRO },
+                    entitlements: buildSsoEntitlements(
+                        [EntitlementName.Business, EntitlementName.FlagsVpn],
+                        PLANS.VPN_PRO
+                    ),
+                }),
+                allSubscriptions: [buildSubscription(PLANS.VPN_PRO)],
+            });
+
+            expect(getOrganizationChildIds(nav)).toContain('organization.sso');
+        });
+
+        it('hides single sign-on without the sso entitlement or an upsell subscription', () => {
+            const nav = resolveNavigation(buildArgs(admin, ssoPermissions));
+
+            expect(getOrganizationChildIds(nav)).not.toContain('organization.sso');
+        });
+    });
+});

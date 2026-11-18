@@ -1,0 +1,154 @@
+import { type FC, useCallback } from 'react';
+import { useSelector } from 'react-redux';
+
+import { useAuthService } from 'proton-pass-web/app/Auth/AuthServiceProvider';
+import { AccountSwitcher } from 'proton-pass-web/app/Views/AccountSwitcher/AccountSwitcher';
+import { useSaveFilterPreferences } from 'proton-pass-web/lib/hooks/useSaveFilterPreferences';
+import { useSpotlightListener } from 'proton-pass-web/lib/hooks/useSpotlightListener';
+
+import { AuthDeviceTopBanner } from '@proton/pass/components/Auth/AuthDeviceTopBanner';
+import { BulkSelectProvider } from '@proton/pass/components/Bulk/BulkSelectProvider';
+import { useAppState } from '@proton/pass/components/Core/AppStateProvider';
+import { useAuthStore } from '@proton/pass/components/Core/AuthStoreProvider';
+import { useAppConnectivityBar } from '@proton/pass/components/Core/ConnectivityProvider';
+import { LockProbeProvider } from '@proton/pass/components/Core/LockProbeProvider';
+import { FolderActionsProvider } from '@proton/pass/components/Folders/FolderActionsProvider';
+import { Header } from '@proton/pass/components/Header/Header';
+import { InviteProvider } from '@proton/pass/components/Invite/InviteProvider';
+import { ItemActionsProvider } from '@proton/pass/components/Item/ItemActionsProvider';
+import { Sidebar } from '@proton/pass/components/Layout/Section/Sidebar';
+import { LockOnboarding } from '@proton/pass/components/Lock/LockOnboarding';
+import type { OnReauthFn } from '@proton/pass/components/Lock/PasswordUnlockProvider';
+import { PasswordUnlockProvider } from '@proton/pass/components/Lock/PasswordUnlockProvider';
+import { PinUnlockProvider } from '@proton/pass/components/Lock/PinUnlockProvider';
+import { MenuSidebar } from '@proton/pass/components/Menu/Sidebar/MenuSidebar';
+import { useItemScope } from '@proton/pass/components/Navigation/NavigationMatches';
+import { InAppNotificationProvider } from '@proton/pass/components/Notifications/InAppNotificationPortal';
+import { InAppNotifications } from '@proton/pass/components/Notifications/InAppNotifications';
+import { OnboardingProvider } from '@proton/pass/components/Onboarding/OnboardingProvider';
+import { OnboardingSSO } from '@proton/pass/components/Onboarding/OnboardingSSO';
+import { OrganizationProvider } from '@proton/pass/components/Organization/OrganizationProvider';
+import { PasswordProvider } from '@proton/pass/components/Password/PasswordProvider';
+import { SpotlightProvider } from '@proton/pass/components/Spotlight/SpotlightProvider';
+import { WithSpotlight } from '@proton/pass/components/Spotlight/WithSpotlight';
+import { UpsellingProvider } from '@proton/pass/components/Upsell/UpsellingProvider';
+import { FirstChild } from '@proton/pass/components/Utils/FirstChild';
+import { VaultActionsProvider } from '@proton/pass/components/Vault/VaultActionsProvider';
+import { usePassConfig } from '@proton/pass/hooks/usePassConfig';
+import { selectLockMode, selectLockSetupRequired } from '@proton/pass/store/selectors/settings';
+import { selectIsSSO } from '@proton/pass/store/selectors/user';
+import { SpotlightMessage } from '@proton/pass/types/worker/spotlight';
+import { APPS } from '@proton/shared/lib/constants';
+import noop from '@proton/utils/noop';
+
+import { ExtensionInstallBar } from './Header/ExtensionInstallBar';
+import { LinuxUpdateBar } from './Header/LinuxUpdateBar';
+import { PrivateRouter } from './PrivateRouter';
+
+const Main: FC = () => {
+    const { status } = useAppState();
+    const authStore = useAuthStore();
+    const localID = authStore?.getLocalID();
+    const isSSO = useSelector(selectIsSSO);
+    const lockMode = useSelector(selectLockMode);
+    const authService = useAuthService();
+    const interactive = useItemScope() !== undefined;
+    const connectivityBar = useAppConnectivityBar(status, localID);
+
+    useSpotlightListener();
+    useSaveFilterPreferences();
+
+    const handleLock = useCallback(() => authService.lock(lockMode, { broadcast: true, soft: false }), [lockMode]);
+
+    return (
+        <div className="content-container flex flex-1 shrink-0 flex-column">
+            <FirstChild>
+                <AuthDeviceTopBanner />
+                {BUILD_TARGET === 'linux' && <LinuxUpdateBar />}
+                {BUILD_TARGET === 'web' && <ExtensionInstallBar />}
+            </FirstChild>
+
+            <div className="flex flex-row flex-nowrap overflow-hidden flex-1 relative w-full h-full anime-fade-in">
+                <Sidebar>
+                    <MenuSidebar onLock={handleLock} onLogout={authService.logout} userPanel={<AccountSwitcher />} />
+                </Sidebar>
+
+                <main id="main" className="content flex-1 overflow-hidden">
+                    <div className="flex flex-nowrap flex-column h-full">
+                        <Header onLock={handleLock} onLogout={authService.logout} interactive={interactive} />
+                        <div className="flex items-center justify-center flex-nowrap w-full h-full">
+                            <PrivateRouter />
+                            {isSSO && (
+                                <WithSpotlight type={SpotlightMessage.SSO_CHANGE_LOCK}>
+                                    {(props) => <OnboardingSSO {...props} />}
+                                </WithSpotlight>
+                            )}
+                            <InAppNotifications />
+                        </div>
+                    </div>
+                </main>
+            </div>
+            {connectivityBar}
+        </div>
+    );
+};
+
+export const PrivateApp: FC = () => {
+    const lockSetup = useSelector(selectLockSetupRequired);
+    const config = usePassConfig();
+    const authStore = useAuthStore();
+    const auth = useAuthService();
+    const logout = useCallback(() => auth.logout({ soft: true }), []);
+    const handleProbe = useCallback(() => auth.checkLock().catch(noop), []);
+
+    const onReauth = useCallback<OnReauthFn>((reauth, fork) => {
+        const localID = authStore?.getLocalID();
+        const userID = authStore?.getUserID();
+
+        void auth.requestFork(
+            {
+                app: APPS.PROTONPASS,
+                host: config.SSO_URL,
+                localID,
+                ...fork,
+            },
+            { localID, reauth, type: 'reauth', userID }
+        );
+    }, []);
+
+    return (
+        <LockProbeProvider onProbe={handleProbe}>
+            <PasswordUnlockProvider onReauth={onReauth}>
+                <PinUnlockProvider>
+                    <OrganizationProvider>
+                        <BulkSelectProvider>
+                            <ItemActionsProvider>
+                                <VaultActionsProvider>
+                                    <FolderActionsProvider>
+                                        <InviteProvider>
+                                            <PasswordProvider>
+                                                <UpsellingProvider>
+                                                    <SpotlightProvider>
+                                                        <InAppNotificationProvider>
+                                                            <OnboardingProvider>
+                                                                {lockSetup ? (
+                                                                    <LockOnboarding onCancel={logout} />
+                                                                ) : (
+                                                                    <Main />
+                                                                )}
+                                                            </OnboardingProvider>
+                                                        </InAppNotificationProvider>
+                                                    </SpotlightProvider>
+                                                </UpsellingProvider>
+                                            </PasswordProvider>
+                                        </InviteProvider>
+                                    </FolderActionsProvider>
+                                </VaultActionsProvider>
+                            </ItemActionsProvider>
+                        </BulkSelectProvider>
+                    </OrganizationProvider>
+                </PinUnlockProvider>
+            </PasswordUnlockProvider>
+        </LockProbeProvider>
+    );
+};

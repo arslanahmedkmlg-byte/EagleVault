@@ -1,0 +1,221 @@
+use super::android_origin::AndroidAppOrigin;
+use super::fetcher::WebauthnFetcher;
+use super::passkey_handling::{deserialize_passkey, get_client, parse_url};
+use super::{PasskeyError, PasskeyResult, ProtonPassKey};
+use crate::passkey::authentication_parser::{parse_authenticate_request, parse_authenticate_request_with_passkey};
+use passkey_client::Origin;
+use passkey_types::Bytes;
+use passkey_types::webauthn::{
+    AuthenticatedPublicKeyCredential, AuthenticationExtensionsClientInputs, AuthenticationExtensionsPrfInputs,
+    AuthenticationExtensionsPrfValues, CredentialRequestOptions, PublicKeyCredentialRequestOptions,
+};
+use url::Url;
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ResolveChallengeResponse {
+    pub response: AuthenticatedPublicKeyCredential,
+}
+
+impl ResolveChallengeResponse {
+    pub fn response(&self) -> PasskeyResult<String> {
+        serde_json::to_string(&self.response)
+            .map_err(|e| PasskeyError::SerializationError(format!("Error serializing response: {e:?}")))
+    }
+}
+
+async fn resolve_challenge(
+    origin: Url,
+    pk: &ProtonPassKey,
+    request: &str,
+    allows_insecure_localhost: bool,
+    fetcher: WebauthnFetcher,
+) -> PasskeyResult<ResolveChallengeResponse> {
+    let parsed = parse_authenticate_request_with_passkey(request, Some(pk))?;
+
+    let credential_request = CredentialRequestOptions { public_key: parsed };
+
+    let mut client = get_client(Some(pk.clone()), fetcher, allows_insecure_localhost);
+
+    let res = client
+        .authenticate(&origin, credential_request, None)
+        .await
+        .map_err(|e| PasskeyError::ResolveChallengeError(format!("Error authenticating: {e:?}")))?;
+
+    Ok(ResolveChallengeResponse { response: res })
+}
+
+pub struct AuthenticateWithPasskeyAndroidRequest {
+    pub origin: String,
+    pub request: String,
+    pub passkey: Vec<u8>,
+    pub client_data_hash: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatePasskeyPrfIosValues {
+    pub first: Vec<u8>,
+    pub second: Option<Vec<u8>>,
+}
+
+impl AuthenticatePasskeyPrfIosValues {
+    fn into_client_inputs(self) -> AuthenticationExtensionsClientInputs {
+        AuthenticationExtensionsClientInputs {
+            prf_already_hashed: Some(AuthenticationExtensionsPrfInputs {
+                eval: Some(AuthenticationExtensionsPrfValues {
+                    first: Bytes::from(self.first),
+                    second: self.second.map(Bytes::from),
+                }),
+                eval_by_credential: None,
+            }),
+            ..Default::default()
+        }
+    }
+}
+
+pub struct AuthenticateWithPasskeyIosRequest {
+    pub service_identifier: String,
+    pub passkey: Vec<u8>,
+    pub client_data_hash: Vec<u8>,
+    pub prf: Option<AuthenticatePasskeyPrfIosValues>,
+}
+
+pub struct AuthenticateWithPasskeyIosResponse {
+    pub user_handle: Vec<u8>,
+    pub relying_party: String,
+    pub signature: Vec<u8>,
+    pub client_data_hash: Vec<u8>,
+    pub authenticator_data: Vec<u8>,
+    pub credential_id: Vec<u8>,
+    pub prf: Option<AuthenticatePasskeyPrfIosValues>,
+}
+
+async fn resolve_challenge_for_mobile(
+    request: CredentialRequestOptions,
+    passkey: &[u8],
+    origin: Origin<'_>,
+    client_data_hash: Option<Vec<u8>>,
+    fetcher: WebauthnFetcher,
+) -> PasskeyResult<AuthenticatedPublicKeyCredential> {
+    let deserialized = deserialize_passkey(passkey)?;
+    let mut client = get_client(Some(deserialized), fetcher, false /* allow insecure localhost */);
+    let res = client
+        .authenticate(origin, request, client_data_hash)
+        .await
+        .map_err(|e| PasskeyError::ResolveChallengeError(format!("Error authenticating: {e:?}")))?;
+
+    Ok(res)
+}
+
+pub async fn resolve_challenge_for_ios(
+    request: AuthenticateWithPasskeyIosRequest,
+    fetcher: WebauthnFetcher,
+) -> PasskeyResult<AuthenticateWithPasskeyIosResponse> {
+    let url = parse_url(&request.service_identifier)?;
+    let credential_request = CredentialRequestOptions {
+        public_key: PublicKeyCredentialRequestOptions {
+            challenge: Default::default(),
+            timeout: None,
+            rp_id: Some(request.service_identifier.clone()),
+            allow_credentials: None,
+            user_verification: Default::default(),
+            hints: None,
+            attestation: Default::default(),
+            attestation_formats: None,
+            extensions: request.prf.map(AuthenticatePasskeyPrfIosValues::into_client_inputs),
+        },
+    };
+
+    let res = resolve_challenge_for_mobile(
+        credential_request,
+        &request.passkey,
+        Origin::from(&url),
+        Some(request.client_data_hash.clone()),
+        fetcher,
+    )
+    .await?;
+
+    let user_handle = res.response.user_handle.map(|h| h.to_vec()).unwrap_or_default();
+    let prf = res
+        .client_extension_results
+        .prf
+        .and_then(|prf| prf.results)
+        .map(|results| AuthenticatePasskeyPrfIosValues {
+            first: results.first.to_vec(),
+            second: results.second.map(|s| s.to_vec()),
+        });
+
+    let response = AuthenticateWithPasskeyIosResponse {
+        user_handle,
+        relying_party: request.service_identifier,
+        signature: res.response.signature.to_vec(),
+        client_data_hash: request.client_data_hash,
+        authenticator_data: res.response.authenticator_data.to_vec(),
+        credential_id: res.raw_id.to_vec(),
+        prf,
+    };
+    Ok(response)
+}
+
+pub async fn resolve_challenge_for_android(
+    request: AuthenticateWithPasskeyAndroidRequest,
+    fetcher: WebauthnFetcher,
+) -> PasskeyResult<String> {
+    let parsed = parse_authenticate_request(&request.request)?;
+
+    let url = parse_url(&request.origin)?;
+    let credential_request = CredentialRequestOptions { public_key: parsed };
+
+    let res = resolve_challenge_for_mobile(
+        credential_request,
+        &request.passkey,
+        Origin::from(&url),
+        request.client_data_hash,
+        fetcher,
+    )
+    .await?;
+
+    serialize_authenticated_credential(&res)
+}
+
+pub struct AuthenticateWithPasskeyAndroidAppRequest {
+    pub app: AndroidAppOrigin,
+    pub request: String,
+    pub passkey: Vec<u8>,
+}
+
+pub async fn resolve_challenge_for_android_app(
+    request: AuthenticateWithPasskeyAndroidAppRequest,
+    fetcher: WebauthnFetcher,
+) -> PasskeyResult<String> {
+    let asset_link = request.app.asset_link()?;
+    let parsed = parse_authenticate_request(&request.request)?;
+    let credential_request = CredentialRequestOptions { public_key: parsed };
+
+    let res = resolve_challenge_for_mobile(
+        credential_request,
+        &request.passkey,
+        Origin::Android(asset_link),
+        None,
+        fetcher,
+    )
+    .await?;
+
+    serialize_authenticated_credential(&res)
+}
+
+fn serialize_authenticated_credential(credential: &AuthenticatedPublicKeyCredential) -> PasskeyResult<String> {
+    serde_json::to_string(credential)
+        .map_err(|e| PasskeyError::SerializationError(format!("Error serializing response: {e:?}")))
+}
+
+pub async fn resolve_challenge_for_domain(
+    url: &str,
+    pk: &[u8],
+    request: &str,
+    allows_insecure_localhost: bool,
+    fetcher: WebauthnFetcher,
+) -> PasskeyResult<ResolveChallengeResponse> {
+    let origin = parse_url(url)?;
+    let deserialized = deserialize_passkey(pk)?;
+    resolve_challenge(origin, &deserialized, request, allows_insecure_localhost, fetcher).await
+}

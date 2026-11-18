@@ -1,0 +1,114 @@
+import { act, renderHook, waitFor } from '@testing-library/react';
+
+import { queryTransactions } from '@proton/payments/core/api/api';
+import { InvoiceOwner, TransactionState, TransactionType } from '@proton/payments/core/constants';
+import { addApiMock } from '@proton/test-api/vitest/api';
+
+import { hookWrapper } from '../../testing/hocs/helpers';
+import { withApi } from '../../testing/vitest/with-api';
+import useTransactions from './useTransactions';
+
+const wrapper = hookWrapper(withApi());
+
+describe('useTransactions', () => {
+    const mockTransactions = [
+        // Visible transactions (should be included)
+        {
+            ID: '1',
+            State: TransactionState.SUCCESS,
+            Type: TransactionType.PAYMENT,
+        },
+        {
+            ID: '2',
+            State: TransactionState.FAILURE,
+            Type: TransactionType.REFUND,
+        },
+        // Hidden state (should be filtered out)
+        {
+            ID: '3',
+            State: TransactionState.NEEDS_ATTENTION,
+            Type: TransactionType.PAYMENT,
+        },
+        // Hidden type (should be filtered out)
+        {
+            ID: '4',
+            State: TransactionState.SUCCESS,
+            Type: TransactionType.AUTHORIZATION,
+        },
+        // Both hidden (should be filtered out)
+        {
+            ID: '5',
+            State: TransactionState.NEEDS_ATTENTION,
+            Type: TransactionType.AUTHORIZATION,
+        },
+    ];
+
+    const mockApiResponse = {
+        Transactions: mockTransactions,
+        Total: mockTransactions.length,
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        addApiMock(queryTransactions({ Page: 0, PageSize: 10, Owner: InvoiceOwner.User }).url, () => mockApiResponse);
+    });
+
+    it('should filter out transactions with hidden states or types', async () => {
+        const { result } = renderHook(() => useTransactions({ owner: InvoiceOwner.User }), {
+            wrapper,
+        });
+
+        // Initial state
+        expect(result.current.transactions).toEqual([]);
+
+        void result.current.request();
+
+        // Wait for the API call to resolve. Should only include visible transactions
+        await waitFor(() => expect(result.current.transactions).toHaveLength(2));
+        expect(result.current.transactions).toEqual([
+            {
+                ID: '1',
+                State: TransactionState.SUCCESS,
+                Type: TransactionType.PAYMENT,
+            },
+            {
+                ID: '2',
+                State: TransactionState.FAILURE,
+                Type: TransactionType.REFUND,
+            },
+        ]);
+    });
+
+    it('should maintain the total count from the API response', async () => {
+        const { result } = renderHook(() => useTransactions({ owner: InvoiceOwner.User }), {
+            wrapper,
+        });
+
+        void result.current.request();
+
+        await waitFor(() => expect(result.current.total).toBe(mockTransactions.length));
+    });
+
+    it('should handle pagination', async () => {
+        const { result } = renderHook(() => useTransactions({ owner: InvoiceOwner.User }), {
+            wrapper,
+        });
+
+        void result.current.request();
+        await waitFor(() => expect(result.current.transactions).toHaveLength(2));
+
+        // Mock API response for page 2
+        addApiMock(queryTransactions({ Page: 1, PageSize: 10, Owner: InvoiceOwner.User }).url, () => ({
+            Transactions: [mockTransactions[0]], // Just one transaction for page 2
+            Total: mockTransactions.length,
+        }));
+
+        // Change page
+        act(() => {
+            result.current.onSelect(2);
+        });
+
+        expect(result.current.page).toBe(2);
+        await waitFor(() => expect(result.current.transactions).toHaveLength(1));
+    });
+});

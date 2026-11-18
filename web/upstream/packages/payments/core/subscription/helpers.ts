@@ -1,0 +1,982 @@
+import isDeepEqual from 'lodash/isEqual';
+
+import type { ProductParam } from '@proton/shared/lib/apps/product';
+import { APPS } from '@proton/shared/lib/constants';
+import type { Organization } from '@proton/shared/lib/interfaces/Organization';
+import { Audience } from '@proton/shared/lib/interfaces/Subscription';
+import type { UserModel } from '@proton/shared/lib/interfaces/User';
+import { hasLifetimeCoupon } from '@proton/shared/lib/payments/coupons';
+import {
+    getPlanFromIDs,
+    getPlanFromPlanIDs,
+    hasFreePlanIDs,
+    isMultiUserPersonalPlan,
+} from '@proton/shared/lib/payments/plan/helpers';
+import type { Plan, PlansMap } from '@proton/shared/lib/payments/plan/interface';
+import { Renew, TaxMode } from '@proton/shared/lib/payments/subscription/constants';
+import {
+    getAddons,
+    getPlan,
+    getPlanName,
+    getPlanTitle,
+} from '@proton/shared/lib/payments/subscription/helpers/plan-info';
+import {
+    hasBundle,
+    hasBundlePro,
+    hasBundlePro2024,
+    hasFree,
+    hasLumo,
+} from '@proton/shared/lib/payments/subscription/helpers/plan-matching';
+import isTruthy from '@proton/utils/isTruthy';
+
+import {
+    type ADDON_NAMES,
+    ADDON_PREFIXES,
+    COUPON_CODES,
+    CYCLE,
+    LIFETIME_PLAN_TITLE,
+    PLANS,
+    PLAN_NAMES,
+    TRIAL_MAX_DEDICATED_IPS,
+    TRIAL_MAX_EXTRA_CUSTOM_DOMAINS,
+    TRIAL_MAX_LUMO_SEATS,
+    TRIAL_MAX_SCRIBE_SEATS,
+    TRIAL_MAX_USERS,
+    VPN_PASS_PROMOTION_COUPONS,
+} from '../constants';
+import { isRegionalCurrency } from '../currencies';
+import type { EntitlementCatalog } from '../entitlements/interface';
+import type { Currency, FeatureLimitKey, FreeSubscription, PlanIDs } from '../interface';
+import { getSupportedAddons, hasAddonFromPlanIDs, isAddonType } from '../plan/addons';
+import { getPlansLimit, getPlansQuantity } from '../plan/feature-limits';
+import { getTrialInfoForSingleSubscription } from '../trials';
+import { isFreeSubscription } from '../type-guards';
+import { FREE_PLAN } from './freePlans';
+import { getSubscriptionsArray, hasLumoMobileSubscription, isManagedExternally } from './helpers/external-management';
+import { getPlanIDs, toPlanIDs } from './helpers/plan-ids';
+import type {
+    MaybeFreeSubscription,
+    Subscription,
+    SubscriptionCheckForbiddenReason,
+    SubscriptionEstimation,
+} from './interface';
+import {
+    canModifySubscriptions,
+    canSelectB2CLumoPlan,
+    isB2CLumoPlan,
+    isForbiddenForStoreLumoSubscriber,
+} from './lumo-purchase-rules';
+import type { MultiSubscriptionContext } from './multi-subscription-context';
+import { getPurchaseOutcome } from './purchase-outcome';
+
+// TODO: Remove these compatibility re-exports after migrating consumers to the focused helper modules.
+export type { MaybeFreeSubscription } from '../subscription/interface';
+export {
+    getSubscriptionsArray,
+    hasLumoMobileSubscription,
+    hasNoExternallyManagedLumoSubscription,
+    isManagedExternally,
+} from './helpers/external-management';
+export {
+    getAudienceFromSubscription,
+    getIsB2BAudienceFromSubscription,
+} from '@proton/shared/lib/payments/subscription/helpers/plan-audience';
+export {
+    getHasConsumerVpnPlan,
+    getHasDriveB2BPlan,
+    getHasExternalMemberCapableB2BPlan,
+    getHasInboxB2BPlan,
+    getHasMailB2BPlan,
+    getHasMeetIncludedInPlan,
+    getHasPassB2BPlan,
+    getHasVpnB2BPlan,
+    getHasVpnOnlyB2BPlan,
+} from '@proton/shared/lib/payments/subscription/helpers/plan-b2b';
+export { getPlanIDs } from './helpers/plan-ids';
+export {
+    getAddons,
+    getPlan,
+    getPlanName,
+    getPlanTitle,
+} from '@proton/shared/lib/payments/subscription/helpers/plan-info';
+export * from '@proton/shared/lib/payments/subscription/helpers/plan-matching';
+export {
+    hasCancellablePlan,
+    hasTrialExpiredLessThan4Weeks,
+    isAutoRenewTrial,
+    isCancellableOnlyViaSupport,
+    isTrial,
+    isTrialExpired,
+    isTrialRenewing,
+    willTrialExpireInLessThan1Week,
+} from './helpers/trial';
+
+export function getSubscriptionPlanTitle(
+    user: UserModel,
+    subscription: MaybeFreeSubscription
+): {
+    planTitle?: string;
+    planName?: PLANS;
+} {
+    const primaryPlan = (() => {
+        if (user.isPaid && !isFreeSubscription(subscription)) {
+            return getPlan(subscription) ?? FREE_PLAN;
+        } else if (user.hasPassLifetime) {
+            return {
+                Title: PLAN_NAMES[PLANS.PASS_LIFETIME],
+                Name: PLANS.PASS_LIFETIME,
+            };
+        } else if (user.isFree) {
+            return FREE_PLAN;
+        }
+    })();
+
+    const planTitle = hasLifetimeCoupon(subscription) ? LIFETIME_PLAN_TITLE : primaryPlan?.Title;
+
+    return {
+        planTitle,
+        planName: primaryPlan?.Name,
+    };
+}
+
+export function getSubscriptionPlanTitles(
+    user: UserModel,
+    subscription: MaybeFreeSubscription
+): ReturnType<typeof getSubscriptionPlanTitle>[] {
+    if (isFreeSubscription(subscription)) {
+        return [getSubscriptionPlanTitle(user, subscription)];
+    }
+
+    return [
+        getSubscriptionPlanTitle(user, subscription),
+        ...(subscription?.SecondarySubscriptions?.map((sub) => getSubscriptionPlanTitle(user, sub)) ?? []),
+    ];
+}
+
+const blackFriday2025Discounts: Set<string> = new Set([
+    COUPON_CODES.BLACK_FRIDAY_2025,
+    COUPON_CODES.BLACK_FRIDAY_2025_MONTH,
+    COUPON_CODES.BLACK_FRIDAY_2025_BUNDLE,
+    COUPON_CODES.BLACK_FRIDAY_2025_LIGHTNING,
+    COUPON_CODES.BLACK_FRIDAY_2025_LUMOADDON,
+    COUPON_CODES.BLACK_FRIDAY_2025_LUMOADDON_OMNI,
+    COUPON_CODES.BLACK_FRIDAY_2025_DEALPD,
+    COUPON_CODES.BLACK_FRIDAY_2025_DEALVM,
+    COUPON_CODES.BLACK_FRIDAY_2025_TWOYEAR,
+
+    COUPON_CODES.BLACK_FRIDAY_2025_CS,
+    COUPON_CODES.BLACK_FRIDAY_2025_TWOYEAR_CS,
+    COUPON_CODES.BLACK_FRIDAY_2025_MONTH_CS,
+    COUPON_CODES.BLACK_FRIDAY_2025_BUNDLE_CS,
+    COUPON_CODES.BLACK_FRIDAY_2025_LUMOADDON_CS,
+    COUPON_CODES.BLACK_FRIDAY_2025_LIGHTNING_CS,
+    COUPON_CODES.BLACK_FRIDAY_2025_LUMOADDON_PROMO_CS,
+]);
+export const getHas2025OfferCoupon = (coupon: string | undefined | null): boolean => {
+    if (!coupon) {
+        return false;
+    }
+    return blackFriday2025Discounts.has(coupon?.toUpperCase());
+};
+
+export const BLACK_FRIDAY_2026_COUPONS: COUPON_CODES[] = [
+    COUPON_CODES.BLACK_FRIDAY_2026_NEW,
+    COUPON_CODES.BLACK_FRIDAY_2026_BUNDLE,
+    COUPON_CODES.BLACK_FRIDAY_2026_PARTNERS,
+    COUPON_CODES.BLACK_FRIDAY_2026_BUSINESS,
+    COUPON_CODES.BLACK_FRIDAY_2026_TRIAL,
+
+    COUPON_CODES.BLACK_FRIDAY_2026_NEW_CS,
+    COUPON_CODES.BLACK_FRIDAY_2026_BUNDLE_CS,
+    COUPON_CODES.BLACK_FRIDAY_2026_PARTNERS_CS,
+    COUPON_CODES.BLACK_FRIDAY_2026_BUSINESS_CS,
+    COUPON_CODES.BLACK_FRIDAY_2026_TRIAL_CS,
+];
+
+const blackFriday2026Discounts: Set<string> = new Set(BLACK_FRIDAY_2026_COUPONS);
+
+export function hasBlackFriday2026Coupon(subscription: MaybeFreeSubscription): boolean {
+    const coupon = subscription?.CouponCode;
+    if (!coupon) {
+        return false;
+    }
+    return blackFriday2026Discounts.has(coupon.toUpperCase());
+}
+
+export const hasMigrationDiscount = (subscription: MaybeFreeSubscription) => {
+    return subscription?.CouponCode?.startsWith('MIGRATION');
+};
+
+/**
+ * returns true if any of the multisubs is managed externally
+ */
+export function isAnyManagedExternally(subscriptions: Subscription[] | MaybeFreeSubscription | null): boolean {
+    if (!subscriptions || isFreeSubscription(subscriptions)) {
+        return false;
+    }
+
+    if (Array.isArray(subscriptions)) {
+        return subscriptions.some(isManagedExternally);
+    }
+
+    return getSubscriptionsArray(subscriptions).some(isManagedExternally);
+}
+
+export const getUpgradedPlan = (subscription: MaybeFreeSubscription, app: ProductParam) => {
+    if (hasFree(subscription)) {
+        switch (app) {
+            case APPS.PROTONPASS:
+                return PLANS.PASS;
+            case APPS.PROTONDRIVE:
+                return PLANS.DRIVE;
+            case APPS.PROTONVPN_SETTINGS:
+                return PLANS.VPN2024;
+            default:
+            case APPS.PROTONMAIL:
+                return PLANS.MAIL;
+        }
+    }
+    if (hasBundle(subscription) || hasBundlePro(subscription) || hasBundlePro2024(subscription)) {
+        return PLANS.BUNDLE_PRO_2024;
+    }
+    return PLANS.BUNDLE;
+};
+
+export const getCanAccessFamilyPlans = (subscription: MaybeFreeSubscription) => {
+    return !hasLumoMobileSubscription(subscription);
+};
+
+const getCanAccessDuoPlanCondition: Set<PLANS | ADDON_NAMES> = new Set([
+    PLANS.MAIL,
+    PLANS.DRIVE,
+    PLANS.DRIVE_1TB,
+    PLANS.PASS,
+    PLANS.PASS_FAMILY,
+    PLANS.VPN,
+    PLANS.VPN2024,
+    PLANS.LUMO_BASIC,
+    PLANS.LUMO,
+    PLANS.LUMO_ULTRA,
+    PLANS.BUNDLE,
+    PLANS.MAIL_PRO,
+    PLANS.VISIONARY,
+    PLANS.MAIL_BUSINESS,
+    PLANS.BUNDLE_PRO,
+    PLANS.BUNDLE_PRO_2024,
+]);
+
+export const getCanSubscriptionAccessDuoPlan = (subscription: MaybeFreeSubscription) => {
+    if (hasLumoMobileSubscription(subscription)) {
+        return false;
+    }
+
+    return hasFree(subscription) || subscription?.Plans?.some(({ Name }) => getCanAccessDuoPlanCondition.has(Name));
+};
+
+/**
+ * @param downgradeIsTrial - if true, then downgrading from 24/12 months to 1 month is allowed to be a trial
+ */
+export const shouldPassIsTrial = ({
+    plansMap,
+    newPlanIDs,
+    newCycle,
+    downgradeIsTrial,
+    subscription: subscriptionParam,
+    entitlementCatalog,
+}: {
+    plansMap: PlansMap;
+    subscription: Subscription | FreeSubscription | undefined;
+    newPlanIDs: PlanIDs;
+    newCycle: CYCLE;
+    downgradeIsTrial: boolean;
+    entitlementCatalog: EntitlementCatalog | undefined;
+}) => {
+    const subscription = subscriptionParam?.UpcomingSubscription ?? subscriptionParam;
+    if (!subscription || isFreeSubscription(subscription)) {
+        return false;
+    }
+
+    if (!getTrialInfoForSingleSubscription(entitlementCatalog, subscription).isB2BTrial) {
+        return false;
+    }
+
+    const oldPlanIDs = getPlanIDs(subscription);
+    const oldCycle = subscription.Cycle;
+    if (newCycle !== oldCycle && (!downgradeIsTrial || newCycle !== CYCLE.MONTHLY)) {
+        return false;
+    }
+
+    const newPrimaryPlan = getPlanFromPlanIDs(plansMap, newPlanIDs);
+    const oldPrimaryPlan = getPlanFromPlanIDs(plansMap, oldPlanIDs);
+    if (!newPrimaryPlan || !oldPrimaryPlan) {
+        return false;
+    }
+
+    if (newPrimaryPlan.Name !== oldPrimaryPlan.Name) {
+        return false;
+    }
+
+    const newPlans = getPlansQuantity(newPlanIDs, plansMap);
+    const oldPlans = getPlansQuantity(oldPlanIDs, plansMap);
+
+    const maxBaseDomains = newPrimaryPlan.MaxDomains;
+    const limits = Object.entries({
+        MaxMembers: TRIAL_MAX_USERS,
+        MaxDomains: maxBaseDomains + TRIAL_MAX_EXTRA_CUSTOM_DOMAINS,
+        MaxIPs: TRIAL_MAX_DEDICATED_IPS,
+        MaxAI: TRIAL_MAX_SCRIBE_SEATS,
+        MaxLumo: TRIAL_MAX_LUMO_SEATS,
+    }) as [FeatureLimitKey, number][];
+
+    for (const [maxKey, limit] of limits) {
+        const newLimit = getPlansLimit(newPlans, maxKey);
+        const oldLimit = getPlansLimit(oldPlans, maxKey);
+
+        if (newLimit > limit || newLimit < oldLimit) {
+            return false;
+        }
+    }
+
+    return true;
+};
+
+/**
+ * In some cases it's completely forbidden to buy a plan, given the current subscription and the selected plan.
+ */
+export function isForbiddenModification(
+    multiSubscriptionContext: MultiSubscriptionContext,
+    selectedPlan: PLANS | ADDON_NAMES | PlanIDs | Plan
+) {
+    if (multiSubscriptionContext.lumoMultiSubscriptions) {
+        return (
+            isForbiddenForStoreLumoSubscriber(multiSubscriptionContext, selectedPlan) ||
+            getPurchaseOutcome(multiSubscriptionContext, toPlanIDs(selectedPlan)).type === 'refused'
+        );
+    }
+
+    const hasExternallyManagedLumo = multiSubscriptionContext.subscriptions.some(
+        (subscription) => isManagedExternally(subscription) && hasLumo(subscription)
+    );
+    return hasExternallyManagedLumo && isMultiUserPersonalPlan(selectedPlan);
+}
+
+export const getHasMemberCapablePlan = (
+    organization: Organization | undefined,
+    subscription: MaybeFreeSubscription
+) => {
+    const supportedAddons = getSupportedAddons(getPlanIDs(subscription));
+    return (
+        (organization?.MaxMembers || 0) > 1 ||
+        (Object.keys(supportedAddons) as ADDON_NAMES[]).some((name) => isAddonType(name, ADDON_PREFIXES.MEMBER))
+    );
+};
+
+export const allCycles = Object.freeze(
+    Object.values(CYCLE)
+        .filter((cycle): cycle is CYCLE => typeof cycle === 'number')
+        .sort((a, b) => a - b)
+);
+export const regularCycles = Object.freeze([CYCLE.MONTHLY, CYCLE.YEARLY, CYCLE.TWO_YEARS]);
+export const customCycles = Object.freeze(allCycles.filter((cycle) => !regularCycles.includes(cycle)));
+
+export const isRegularCycle = (cycle: CYCLE) => {
+    return regularCycles.includes(cycle);
+};
+
+export const getValidCycle = (cycle: number): CYCLE | undefined => {
+    return allCycles.includes(cycle) ? cycle : undefined;
+};
+
+const getValidAudienceCondition = [Audience.B2B, Audience.B2C, Audience.FAMILY];
+export const getValidAudience = (audience: string | undefined | null): Audience | undefined => {
+    return getValidAudienceCondition.find((realAudience) => realAudience === audience);
+};
+
+export const hasCustomCycle = (subscription: MaybeFreeSubscription) => {
+    if (!subscription || isFreeSubscription(subscription)) {
+        return false;
+    }
+    return customCycles.includes(subscription.Cycle);
+};
+
+export function getNormalCycleFromCustomCycle(cycle: CYCLE): CYCLE;
+export function getNormalCycleFromCustomCycle(cycle: undefined): undefined;
+export function getNormalCycleFromCustomCycle(cycle: CYCLE | undefined): CYCLE | undefined;
+export function getNormalCycleFromCustomCycle(cycle: CYCLE | undefined): CYCLE | undefined {
+    if (!cycle) {
+        return undefined;
+    }
+
+    if (regularCycles.includes(cycle)) {
+        return cycle;
+    }
+
+    // find the closest lower regular cycle
+    for (let i = regularCycles.length - 1; i >= 0; i--) {
+        const regularCycle = regularCycles[i];
+
+        if (regularCycle < cycle) {
+            return regularCycle;
+        }
+    }
+
+    return CYCLE.MONTHLY;
+}
+
+export const getMaximumCycleForApp = (app: ProductParam, currency?: Currency) => {
+    if (app === APPS.PROTONPASS || app === APPS.PROTONWALLET) {
+        return CYCLE.YEARLY;
+    }
+    // Even though this returns the same value as the final return, adding this explicitly because VPN wants to keep the two year cycle
+    if (app === APPS.PROTONVPN_SETTINGS) {
+        return CYCLE.TWO_YEARS;
+    }
+
+    return currency && isRegionalCurrency(currency) ? CYCLE.YEARLY : CYCLE.TWO_YEARS;
+};
+
+export function isTaxInclusive(checkResponse?: Pick<SubscriptionEstimation, 'TaxMode'>): boolean {
+    return checkResponse?.TaxMode === TaxMode.INCLUSIVE;
+}
+
+export function isTaxExclusive(checkResponse?: Pick<SubscriptionEstimation, 'TaxMode'>): boolean {
+    return checkResponse?.TaxMode === TaxMode.EXCLUSIVE;
+}
+
+export const PASS_LAUNCH_OFFER = 'passlaunch';
+
+export function hasPassLaunchOffer(subscription: MaybeFreeSubscription): boolean {
+    if (!subscription || isFreeSubscription(subscription)) {
+        return false;
+    }
+
+    const plan = getPlan(subscription);
+
+    const isLaunchOffer = plan?.Offer === PASS_LAUNCH_OFFER;
+
+    return isLaunchOffer && subscription.Cycle === CYCLE.YEARLY && plan?.Name === PLANS.PASS;
+}
+
+export function isSameCycle(
+    subscriptionLeft: Subscription | FreeSubscription,
+    subscriptionRight: MaybeFreeSubscription
+) {
+    return subscriptionLeft.Cycle === subscriptionRight?.Cycle;
+}
+
+export function isAddonDowngrade(current: Subscription, upcoming: Subscription | undefined): boolean {
+    const upcomingAddons = getAddons(upcoming);
+
+    return getAddons(current).some(
+        ({ Name, Quantity }) => (upcomingAddons.find((addon) => addon.Name === Name)?.Quantity ?? 0) < Quantity
+    );
+}
+
+// A renew-disabled subscription cancels its upcoming term alongside it, so that upcoming term will never take effect.
+export function getEffectiveUpcomingSubscription(subscription: Subscription): Subscription | undefined {
+    return subscription.Renew === Renew.Disabled ? undefined : (subscription.UpcomingSubscription ?? undefined);
+}
+
+export function isUpcomingSubscriptionUnpaid(subscription: Subscription): boolean {
+    return subscription.UpcomingSubscription?.IsPrepaid === false;
+}
+
+export function getRenewalTime(subscription: Subscription): number;
+export function getRenewalTime(subscription: FreeSubscription): undefined;
+export function getRenewalTime(subscription: Subscription | FreeSubscription): number | undefined;
+export function getRenewalTime(subscription: Subscription | FreeSubscription): number | undefined {
+    const current = subscription;
+    const upcoming = subscription.UpcomingSubscription;
+    const latestSubscription = upcoming ?? current;
+
+    return upcoming && isUpcomingSubscriptionUnpaid(subscription) ? upcoming.PeriodStart : latestSubscription.PeriodEnd;
+}
+
+export function isSubscriptionUnchanged(
+    subscription: Subscription | FreeSubscription | null | undefined,
+    planIds: PlanIDs,
+    cycle?: CYCLE
+): boolean {
+    const subscriptionPlanIds = getPlanIDs(subscription);
+
+    const planIdsUnchanged = isDeepEqual(subscriptionPlanIds, planIds);
+    // Cycle is optional, so if it is not provided, we assume it is unchanged
+    const cycleUnchanged = !cycle || cycle === subscription?.Cycle;
+
+    return planIdsUnchanged && cycleUnchanged;
+}
+
+/**
+ * A checkout or modification selection identified by plan/addon quantities and billing cycle.
+ */
+export type SubscriptionSelection = {
+    planIDs: PlanIDs;
+    cycle: CYCLE;
+};
+
+/**
+ * Compares two subscription selections for equality.
+ *
+ * @param a - First selection to compare.
+ * @param b - Second selection to compare.
+ * @returns `true` when both selections have the same cycle and equivalent planIDs (including addon quantities).
+ */
+export function isSubscriptionSelectionEqual(a: SubscriptionSelection, b: SubscriptionSelection): boolean {
+    return a.cycle === b.cycle && isDeepEqual(a.planIDs, b.planIDs);
+}
+
+/**
+ * Whether the given selection differs from the subscriber's current paid subscription.
+ *
+ * @param subscription - The subscriber's active subscription.
+ * @param planIDs - Selected plan and addon quantities.
+ * @param cycle - Selected billing cycle.
+ * @returns `true` when the subscriber is paid and the selection does not match their current planIDs and cycle; otherwise `false` (including for free subscribers).
+ */
+export function isModifyingPaidSubscriptionSelection(
+    subscription: Subscription | FreeSubscription,
+    planIDs: PlanIDs,
+    cycle: CYCLE
+): boolean {
+    if (isFreeSubscription(subscription)) {
+        return false;
+    }
+
+    return !isSubscriptionUnchanged(subscription, planIDs, cycle);
+}
+
+export const hasLumoAddon = (subscription: MaybeFreeSubscription) => {
+    const currentPlanIDs = getPlanIDs(subscription);
+
+    return hasAddonFromPlanIDs(ADDON_PREFIXES.LUMO, currentPlanIDs);
+};
+
+export const hasMeetAddon = (subscription: MaybeFreeSubscription) => {
+    const currentPlanIDs = getPlanIDs(subscription);
+
+    return hasAddonFromPlanIDs(ADDON_PREFIXES.MEET, currentPlanIDs);
+};
+
+/**
+ * Variable cycle offers are marked by automatically created unpaid scheduled subscriptions with different cycles than
+ * the current subscription. For example when user subscribes to vpn2024 24m then the backend will create a scheduled
+ * 12m subscription. User will be billed when the upcoming 12m term starts. Another example is when user subscribes to
+ * bundle2022 6m - the backend will also create scheduled 12m subscription. P2-634 is the relevant ticket.
+ */
+export function getIsVariableCycleOffer(subscription: Subscription | FreeSubscription | null | undefined): boolean {
+    if (!subscription || isFreeSubscription(subscription)) {
+        return false;
+    }
+
+    const current = subscription;
+    const upcoming = subscription.UpcomingSubscription;
+
+    return !!upcoming && current.Cycle !== upcoming.Cycle && isUpcomingSubscriptionUnpaid(subscription);
+}
+
+type SubscriptionCheckForbiddenEstimationParameters = {
+    planIDs: PlanIDs;
+    cycle: CYCLE;
+    coupon?: string;
+    Codes?: string[];
+};
+
+function getCheckForbiddenReasonForSubscription(
+    subscription: Subscription,
+    estimationParameters: SubscriptionCheckForbiddenEstimationParameters
+): SubscriptionCheckForbiddenReason {
+    /**
+     * Consider the table with possible cases:
+     *
+     * | Scenario                       | selectedSameAsCurrent | selectedSameAsUpcoming |
+     * |--------------------------------|-----------------------|------------------------|
+     * | hasVariableCycleOffer          | check forbidden (1*)  | check forbidden        |
+     * | hasUpcomingPrepaidSubscription | check forbidden (1*)  | check forbidden        |
+     * | hasNoUpcomingSubscription      | check forbidden (1*)  | n/a                    |
+     * | hasScheduledUnpaidDowncycling  | check allowed         | check forbidden        |
+     *
+     * (1*) - unless a NEW coupon/code is provided — one that differs from the coupon already applied to the active
+     *  subscription (or more than one code). In that case the check is allowed so the backend can validate the coupon
+     *  and return the discounted price. Re-supplying the coupon the subscription already has does not count as new and
+     *  stays "check forbidden". See P2-1927 and P2-2106.
+     *
+     * Please do not join this multi-line comment with others, I keep it separated to prevent some auto-formatting
+     * tools from breaking this table.
+     */
+    /**
+     * "check forbidden" means that the /check endpoint will return an error. "check allowed" means that the /check
+     * endpoint will work as expected.
+     *
+     * Two branches short-circuit before the table above is reached:
+     *   - A free plan selection (`hasFreePlanIDs`) is always forbidden with reason 'paid-plan-required'. The /check
+     *     endpoint only estimates paid plans, so there's nothing to estimate for a free plan.
+     *   - No subscription at all (a new or free user) is always allowed.
+     *
+     * hasVariableCycleOffer - when user has an automatic scheduled unpaid subscription. For example, when user
+     * subscribes to vpn2024 24m then the backend will create a scheduled 12m subscription.
+     *
+     * hasUpcomingPrepaidSubscription - when user manually created a scheduled subscription and paid for it. This can
+     * happen when user subscribes to a higher cycle. For example, if user has 1m bundle2022 and subscribes to 12m
+     * bundle2022, then we will charge user immediately for 12m subscription, and it will start only when the 1m ends.
+     *
+     * hasNoUpcomingSubscription - the simplest case. Just subscription.
+     *
+     * hasScheduledUnpaidDowncycling - this is a special case for some addons like Scribe. If user has a B2B plan with
+     * scribe addons and they want to decrease the number of scribes then it creates a scheduled subscription with lower
+     * number of scribes.
+     *
+     * The four cases described above are handled by:
+     * `(forbiddenWithoutNewCoupon && !hasNewCoupon) || selectedSameAsUpcoming`, where
+     * `forbiddenWithoutNewCoupon = selectedSameAsCurrent && !hasScheduledUnpaidModification`. When it matches, the
+     * function returns reason 'already-subscribed'.
+     *
+     * The `!hasNewCoupon` part allows the /check call when a NEW coupon or promo code is present, even if the plan and
+     * cycle are the same as the current subscription. This is needed so the backend can validate the coupon and return
+     * the discounted price. In that case the function returns `{ forbidden: false, reason: 'possibly-invalid-coupon' }`
+     * (see {@link isDangerouslyAllowedSubscriptionEstimation}). A coupon counts as new only when it differs from the
+     * coupon already applied to the subscription (or when more than one code is supplied) — re-supplying the existing
+     * coupon stays 'already-subscribed', see P2-2106. The coupon exception intentionally does not apply to
+     * `selectedSameAsUpcoming`.
+     *
+     * The condition `selectedSameAsCurrentIgnorringCycle && managedExternally` is a special case for multi-subs. If
+     * user has a mobile subscription (for example, Lumo) and selects the same plan on web (any cycle) then the check is
+     * forbidden (reason 'already-subscribed-externally'). Users must not be able to modify the subscription that's
+     * managed externally. In some cases, they should be allowed to create a new one, and we call it multi-subs.
+     *
+     * P2-634 is the relevant ticket.
+     *
+     * Additionally, some modification can be forbidden according to the `isForbiddenModification` function (reason
+     * 'offer-not-available'). At the time of writing this comment, it was forbidden to buy multi-user personal plans
+     * (Duo, Family, etc) while having an externally managed Lumo subscription.
+     *
+     */
+
+    const { planIDs, cycle } = estimationParameters;
+
+    const selectedSameAsCurrentIgnorringCycle = isSubscriptionUnchanged(subscription, planIDs);
+
+    const managedExternally = isManagedExternally(subscription);
+
+    if (selectedSameAsCurrentIgnorringCycle && managedExternally) {
+        return { forbidden: true, reason: 'already-subscribed-externally' };
+    }
+
+    const codes: string[] = (() => {
+        if (estimationParameters.Codes) {
+            return estimationParameters.Codes;
+        }
+
+        if (estimationParameters.coupon) {
+            return [estimationParameters.coupon];
+        }
+
+        return [];
+    })();
+
+    const upcoming = subscription.UpcomingSubscription;
+    const hasUpcomingSubscription = !!upcoming;
+    const selectedSameAsUpcoming = hasUpcomingSubscription ? isSubscriptionUnchanged(upcoming, planIDs, cycle) : false;
+
+    const selectedSameAsCurrent = isSubscriptionUnchanged(subscription, planIDs, cycle);
+
+    const variableCycleOffer = getIsVariableCycleOffer(subscription);
+
+    const hasScheduledUnpaidModification =
+        hasUpcomingSubscription && !variableCycleOffer && isUpcomingSubscriptionUnpaid(subscription);
+
+    const forbiddenWithoutNewCoupon = selectedSameAsCurrent && !hasScheduledUnpaidModification;
+    const hasNewCoupon = !!codes.length && (codes.length >= 2 || codes[0] !== subscription.CouponCode);
+    if ((forbiddenWithoutNewCoupon && !hasNewCoupon) || selectedSameAsUpcoming) {
+        return { forbidden: true, reason: 'already-subscribed' };
+    }
+
+    /**
+     * See comments for {@link isDangerouslyAllowedSubscriptionEstimation} for more details.
+     */
+    if (forbiddenWithoutNewCoupon && hasNewCoupon) {
+        return { forbidden: false, reason: 'possibly-invalid-coupon' };
+    }
+
+    return { forbidden: false };
+}
+
+export function isSubscriptionCheckForbiddenWithReason(
+    multiSubscriptionContext: MultiSubscriptionContext,
+    estimationParameters: SubscriptionCheckForbiddenEstimationParameters
+): SubscriptionCheckForbiddenReason {
+    const { planIDs } = estimationParameters;
+
+    if (hasFreePlanIDs(planIDs)) {
+        return {
+            forbidden: true,
+            reason: 'paid-plan-required',
+        };
+    }
+
+    if (isForbiddenModification(multiSubscriptionContext, planIDs)) {
+        return { forbidden: true, reason: 'offer-not-available' };
+    }
+
+    const reasons = multiSubscriptionContext.subscriptions.map((subscription) =>
+        getCheckForbiddenReasonForSubscription(subscription, estimationParameters)
+    );
+
+    return (
+        reasons.find(({ forbidden }) => forbidden) ??
+        reasons.find(({ reason }) => reason === 'possibly-invalid-coupon') ?? { forbidden: false }
+    );
+}
+
+/**
+ * Ticket P2-1927. We now allow subscription estimation calls when user selects the same plan+cycle as the existing
+ * subscription, but only if a coupon is provided. This, however, has dangers: if coupon is valid, then
+ * `subscription/check` endpoint will return the correct estimation as usual. If coupon is invalid, then the endpoint
+ * will throw an error. In this case, it's the job of the consumer to handle the error.
+ */
+export function isDangerouslyAllowedSubscriptionEstimation(
+    ...args: Parameters<typeof isSubscriptionCheckForbiddenWithReason>
+): boolean {
+    const { forbidden, reason } = isSubscriptionCheckForbiddenWithReason(...args);
+    return !forbidden && reason === 'possibly-invalid-coupon';
+}
+
+export function isSubscriptionCheckForbidden(
+    multiSubscriptionContext: MultiSubscriptionContext,
+    estimationParameters: SubscriptionCheckForbiddenEstimationParameters
+): boolean {
+    return isSubscriptionCheckForbiddenWithReason(multiSubscriptionContext, estimationParameters).forbidden;
+}
+
+export function canModify(multiSubscriptionContext: MultiSubscriptionContext) {
+    if (multiSubscriptionContext.lumoMultiSubscriptions) {
+        return canModifySubscriptions(multiSubscriptionContext);
+    }
+
+    const { subscriptions } = multiSubscriptionContext;
+    return (
+        subscriptions.length === 0 ||
+        subscriptions.some((subscription) => !isManagedExternally(subscription)) ||
+        (subscriptions.length === 1 && hasLumo(subscriptions[0]))
+    );
+}
+
+export function canStartPurchase(
+    multiSubscriptionContext: MultiSubscriptionContext,
+    requestedPlanName: PLANS | ADDON_NAMES | undefined
+): boolean {
+    return (
+        canModify(multiSubscriptionContext) ||
+        (canSelectB2CLumoPlan(multiSubscriptionContext) && isB2CLumoPlan(multiSubscriptionContext, requestedPlanName))
+    );
+}
+
+type SubscriptionActions =
+    | {
+          canModify: true;
+          cantModifyReason: undefined;
+      }
+    | {
+          canModify: false;
+          cantModifyReason: 'subscription_managed_externally';
+      };
+
+export function getAvailableSubscriptionActions(
+    multiSubscriptionContext: MultiSubscriptionContext
+): SubscriptionActions {
+    if (canModify(multiSubscriptionContext)) {
+        return { canModify: true, cantModifyReason: undefined };
+    }
+
+    return { canModify: false, cantModifyReason: 'subscription_managed_externally' };
+}
+
+/**
+ * This logic doesn't really belong to the frontend. It's a patch until it's moved to the backend, see P2-1546.
+ */
+export function shouldHaveUpcomingSubscription(subscription: Subscription | FreeSubscription) {
+    if (isFreeSubscription(subscription)) {
+        return false;
+    }
+
+    const planName = getPlanName(subscription);
+    if (!planName) {
+        return false;
+    }
+
+    return (subscription.RenewCycle ?? subscription.Cycle) !== subscription.Cycle;
+}
+
+export const getIsVPNPassPromotion = (coupon: string | undefined, currency: Currency | undefined) => {
+    return VPN_PASS_PROMOTION_COUPONS.includes(coupon as any) && (!currency || !isRegionalCurrency(currency));
+};
+
+interface FreeSubscriptionResult {
+    isFree: true;
+    subscriptionExpiresSoon: false;
+    renewDisabled: false;
+    renewEnabled: true;
+    expirationDate: null;
+}
+
+type SubscriptionResult = {
+    isFree: false;
+    renewDisabled: boolean;
+    renewEnabled: boolean;
+    planName: string;
+} & (
+    | {
+          subscriptionExpiresSoon: true;
+          expirationDate: number;
+      }
+    | {
+          subscriptionExpiresSoon: false;
+          expirationDate: null;
+      }
+);
+
+export const isFreeSubscriptionResult = (
+    subscriptionResult: SubscriptionResult | FreeSubscriptionResult
+): subscriptionResult is FreeSubscriptionResult => {
+    return subscriptionResult.isFree;
+};
+
+export function subscriptionExpires(subscription: undefined | null, cancelled?: boolean): FreeSubscriptionResult;
+export function subscriptionExpires(subscription: FreeSubscription, cancelled?: boolean): FreeSubscriptionResult;
+export function subscriptionExpires(subscription: Subscription | undefined, cancelled?: boolean): SubscriptionResult;
+export function subscriptionExpires(subscription: Subscription, cancelled?: boolean): SubscriptionResult;
+export function subscriptionExpires(
+    subscription: MaybeFreeSubscription | null,
+    cancelled?: boolean
+): FreeSubscriptionResult | SubscriptionResult;
+export function subscriptionExpires(
+    subscription: MaybeFreeSubscription | null,
+    cancelled = false
+): FreeSubscriptionResult | SubscriptionResult {
+    if (!subscription || isFreeSubscription(subscription)) {
+        return {
+            isFree: true,
+            subscriptionExpiresSoon: false,
+            renewDisabled: false,
+            renewEnabled: true,
+            expirationDate: null,
+        };
+    }
+
+    const latestSubscription = (() => {
+        if (subscription.Renew === Renew.Disabled || cancelled) {
+            return subscription;
+        }
+
+        return subscription.UpcomingSubscription ?? subscription;
+    })();
+    const renewDisabled = latestSubscription.Renew === Renew.Disabled || cancelled;
+    const renewEnabled = !renewDisabled;
+    const subscriptionExpiresSoon = renewDisabled;
+
+    // This will never be undefined but the empty string is here to make TS happy
+    const planName = getPlanTitle(latestSubscription) ?? '';
+
+    if (subscriptionExpiresSoon) {
+        return {
+            isFree: false,
+            subscriptionExpiresSoon,
+            renewDisabled,
+            renewEnabled,
+            planName,
+            expirationDate: latestSubscription.PeriodEnd,
+        };
+    } else {
+        return {
+            isFree: false,
+            subscriptionExpiresSoon,
+            renewDisabled,
+            renewEnabled,
+            planName,
+            expirationDate: null,
+        };
+    }
+}
+
+export function getSoonestEndingSubscription(
+    subscriptions: Subscription[],
+    isCandidate: (subscription: Subscription) => boolean
+): Subscription | undefined {
+    return subscriptions
+        .filter(isCandidate)
+        .reduce<Subscription | undefined>(
+            (soonest, subscription) =>
+                !soonest || subscription.PeriodEnd < soonest.PeriodEnd ? subscription : soonest,
+            undefined
+        );
+}
+
+/** If plan has changed but coupon remains, check if there is a mismatch */
+const vpnInvalidPlansForCouponMap: Map<COUPON_CODES, PLANS[]> = new Map([
+    [COUPON_CODES.VPNPASSINTRO2026, [PLANS.VPN2024]],
+    [COUPON_CODES.VPN_INTRO_2025, [PLANS.VPN_PASS_BUNDLE]],
+]);
+
+const getVpnAutoCoupon = ({ coupon, planIDs, cycle }: Parameters<typeof getAutoCoupon>[0]) => {
+    const plansInvalidForCoupon = vpnInvalidPlansForCouponMap.get(coupon as COUPON_CODES);
+    const hasInvalidPlanForCoupon = Object.keys(planIDs).some((plan) => plansInvalidForCoupon?.includes(plan as PLANS));
+
+    // user already provided a coupon
+    if (coupon && !hasInvalidPlanForCoupon) {
+        return;
+    }
+
+    const planAndCycleMatchVPN2024 =
+        [PLANS.VPN2024].some((plan) => planIDs?.[plan]) && [CYCLE.YEARLY, CYCLE.TWO_YEARS].includes(cycle as any);
+    if (planAndCycleMatchVPN2024) {
+        return COUPON_CODES.VPN_INTRO_2025;
+    }
+
+    const planAndCycleMatchVPNPassBundle =
+        [PLANS.VPN_PASS_BUNDLE].some((plan) => planIDs?.[plan]) &&
+        [CYCLE.YEARLY, CYCLE.TWO_YEARS].includes(cycle as any);
+    if (planAndCycleMatchVPNPassBundle) {
+        return COUPON_CODES.VPNPASSINTRO2026;
+    }
+
+    return;
+};
+
+export const getAutoCoupon = ({
+    planIDs,
+    cycle,
+    coupon,
+    trial,
+    currency,
+}: {
+    planIDs: PlanIDs;
+    cycle: CYCLE;
+    currency: Currency;
+    coupon?: string | null;
+    trial?: boolean;
+}) => {
+    // Don't apply automatic coupons for trials
+    if (trial) {
+        return coupon || undefined;
+    }
+
+    const vpnAutoCoupon = getVpnAutoCoupon({ coupon, planIDs, cycle, currency });
+    if (vpnAutoCoupon) {
+        return vpnAutoCoupon;
+    }
+
+    return coupon || undefined;
+};
+
+export function notHigherThanAvailableOnBackend(planIDs: PlanIDs, plansMap: PlansMap, cycle: CYCLE): CYCLE {
+    const plan = getPlanFromIDs(planIDs, plansMap);
+    if (!plan) {
+        return cycle;
+    }
+
+    const availableCycles = Object.keys(plan.Pricing) as unknown as CYCLE[];
+    const maxCycle = Math.max(...availableCycles) as CYCLE;
+    return Math.min(cycle, maxCycle);
+}
+
+export const getCodes = ({ gift, coupon }: { gift?: string; coupon?: string }): string[] =>
+    [gift, coupon].filter(isTruthy);

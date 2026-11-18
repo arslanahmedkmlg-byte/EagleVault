@@ -1,0 +1,112 @@
+import { type FC, useMemo } from 'react';
+import { useHistory } from 'react-router-dom';
+
+import { useAuthService } from 'proton-pass-web/app/Auth/AuthServiceProvider';
+import { AccountSwitcherList } from 'proton-pass-web/app/Views/AccountSwitcher/AccountSwitcherList';
+import { AccountSwitcherTooltip } from 'proton-pass-web/app/Views/AccountSwitcher/AccountSwitcherTooltip';
+import { c } from 'ttag';
+
+import DropdownButton from '@proton/components/components/dropdown/DropdownButton';
+import { IcUser } from '@proton/icons/icons/IcUser';
+import { AppStateManager } from '@proton/pass/components/Core/AppStateManager';
+import { useAppState } from '@proton/pass/components/Core/AppStateProvider';
+import { useAuthStore } from '@proton/pass/components/Core/AuthStoreProvider';
+import { useLobbyConnectivityBar } from '@proton/pass/components/Core/ConnectivityProvider';
+import { useAvailableSessions } from '@proton/pass/components/Core/SessionsProvider';
+import { LobbyContent } from '@proton/pass/components/Layout/Lobby/LobbyContent';
+import { LobbyLayout } from '@proton/pass/components/Layout/Lobby/LobbyLayout';
+import { type AuthRouteState, PublicRoutes } from '@proton/pass/components/Navigation/routing';
+import { usePassConfig } from '@proton/pass/hooks/usePassConfig';
+import { clientBooted, clientBusy, clientErrored } from '@proton/pass/lib/client';
+import type { MaybeNull } from '@proton/pass/types/utils';
+import { AppStatus } from '@proton/pass/types/worker/state';
+import { or } from '@proton/pass/utils/fp/predicates';
+import { ForkType } from '@proton/shared/lib/authentication/fork/constants';
+import { APPS } from '@proton/shared/lib/constants';
+
+export const Lobby: FC = () => {
+    const { SSO_URL: host } = usePassConfig();
+    const authService = useAuthService();
+    const authStore = useAuthStore();
+    const { status } = useAppState();
+    const sessions = useAvailableSessions();
+
+    const history = useHistory<MaybeNull<AuthRouteState>>();
+    const connectivityBar = useLobbyConnectivityBar();
+
+    const requestSwitchFork = () => authService.requestFork({ host, app: APPS.PROTONPASS, forkType: ForkType.SWITCH });
+
+    const warning = useMemo(() => {
+        const err = history.location.state?.error;
+        if (err) {
+            switch (err) {
+                case 'fork':
+                    return c('Error').t`The session has expired. Please sign in again.`;
+                default:
+                    return c('Error').t`Something went wrong. Please sign in again.`;
+            }
+        }
+        if (clientErrored(status)) return c('Error').t`An error occurred while resuming your session`;
+    }, [history.location.state, status]);
+
+    return (
+        <LobbyLayout>
+            <LobbyContent
+                status={status}
+                warning={warning}
+                onLogin={(options) => {
+                    if (warning) history.replace({ ...history.location, state: null });
+                    return authService.init(options);
+                }}
+                onLogout={() => authService.logout({ soft: false })}
+                onFork={() => (DESKTOP_BUILD ? history.push(PublicRoutes.DeviceLogin) : requestSwitchFork())}
+                onLoginInApp={DESKTOP_BUILD ? requestSwitchFork : undefined}
+                onOfflineFallback={() => AppStateManager.setStatus(AppStatus.PASSWORD_LOCKED)}
+                onRegister={() => authService.requestFork({ host, app: APPS.PROTONPASS, forkType: ForkType.SIGNUP })}
+                renderError={() => <></>}
+                renderAccountSwitcher={() => {
+                    /** If the auth store has been cleared when reaching the lobby,
+                     * show the full available sessions list. This can happen when
+                     * logging out of a session with multiple active sessions */
+                    if (!authStore?.hasSession()) {
+                        return (
+                            sessions.length > 0 && (
+                                <div
+                                    className="flex flex-column gap-2 overflow-auto mb-4 max-h-custom max-w-full"
+                                    style={{ '--max-h-custom': '11.5em' }}
+                                >
+                                    <AccountSwitcherList sessions={sessions} />
+                                </div>
+                            )
+                        );
+                    }
+
+                    return (
+                        <AccountSwitcherTooltip sessions={sessions}>
+                            {({ anchorRef, isOpen, toggle }) => (
+                                <div className="relative text-rg mb-2 text-ellipsis max-w-full flex justify-center">
+                                    <DropdownButton
+                                        className="flex gap-2"
+                                        color="weak"
+                                        hasCaret
+                                        icon
+                                        isOpen={isOpen}
+                                        onClick={toggle}
+                                        pill
+                                        ref={anchorRef}
+                                        shape="ghost"
+                                    >
+                                        <IcUser className="shrink-0" />
+                                        <span className="text-ellipsis">{authStore?.getUserEmail()}</span>
+                                    </DropdownButton>
+                                </div>
+                            )}
+                        </AccountSwitcherTooltip>
+                    );
+                }}
+            />
+
+            {!or(clientBusy, clientBooted)(status) && connectivityBar}
+        </LobbyLayout>
+    );
+};

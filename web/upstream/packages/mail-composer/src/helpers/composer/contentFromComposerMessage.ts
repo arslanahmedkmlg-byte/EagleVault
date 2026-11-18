@@ -1,0 +1,208 @@
+import {
+    getComposerDefaultFontStyles,
+    insertTextBeforeContent,
+    prepareContentToInsert,
+} from '@proton/mail-message/helpers/message/messageContent';
+import {
+    CLASSNAME_SIGNATURE_CONTAINER,
+    exportPlainTextSignature,
+    insertSignature,
+} from '@proton/mail-message/helpers/message/messageSignature';
+import type { MessageState } from '@proton/mail-message/store/messages/messagesTypes';
+import type { Address } from '@proton/shared/lib/interfaces/Address';
+import type { MailSettings } from '@proton/shared/lib/interfaces/MailSettings';
+import type { UserSettings } from '@proton/shared/lib/interfaces/UserSettings';
+import { isPlainText as testIsPlainText } from '@proton/shared/lib/mail/messages';
+
+export type ComposerReturnType = 'html' | 'plaintext';
+
+interface AddressSignatureOptions {
+    senderAddress: string | undefined;
+    addresses: Address[];
+    mailSettings: MailSettings;
+    userSettings: Partial<UserSettings>;
+}
+
+/** The sender's signature as it appears in a plain text draft — the marker the content before it is cut at. */
+export const getAddressPlainTextSignature = ({
+    senderAddress,
+    addresses,
+    mailSettings,
+    userSettings,
+}: AddressSignatureOptions) => {
+    const signature = addresses.find((address) => address.Email === senderAddress)?.Signature || '';
+
+    return exportPlainTextSignature(insertSignature('', signature, mailSettings, userSettings, undefined));
+};
+
+/** Without the signature element, setMessageContentBeforeBlockquote's walk deletes every top-level child including the quote. */
+export const hasSignatureContainer = (editorContent: string): boolean =>
+    Array.from(new DOMParser().parseFromString(editorContent, 'text/html').body.children).some((child) =>
+        child.classList.contains(CLASSNAME_SIGNATURE_CONTAINER)
+    );
+
+type GetContentBeforeBlockquoteOptions = (
+    | {
+          editorType: 'plaintext';
+          /** Plain text type only: Signature as plain text string */
+          addressSignature: string;
+      }
+    | {
+          editorType: 'html';
+          returnType: ComposerReturnType;
+      }
+) & { editorContent: string };
+
+/**
+ * Returns content before the blockquote and signature in the editor
+ */
+export const getMessageContentBeforeBlockquote = (args: GetContentBeforeBlockquoteOptions) => {
+    const { editorType, editorContent } = args;
+
+    if (!editorContent) {
+        return '';
+    }
+
+    if ('plaintext' === editorType) {
+        const { addressSignature } = args;
+        // If no signature is set, the detection will be broken because indexOf will return 0,
+        // and we will end up with an empty string as the message content.
+        // To avoid that, we set the index to -1 if no signature is set.
+        const signatureIndex = addressSignature === '' ? -1 : editorContent.indexOf(addressSignature);
+        return signatureIndex === -1 ? editorContent : editorContent.slice(0, signatureIndex);
+    }
+
+    if ('html' === editorType) {
+        const editorContentRootDiv = new DOMParser().parseFromString(editorContent, 'text/html').body as HTMLElement;
+        let shouldDelete = false;
+
+        // Signature div is in every mail even if it's empty. Because of that and
+        // in order to get mail content only, we can remove everything after the signature div
+        let current: ChildNode | null = editorContentRootDiv?.childNodes[0];
+        while (current) {
+            const next: ChildNode | null = current.nextSibling;
+            if (
+                !shouldDelete &&
+                current instanceof HTMLElement &&
+                current.classList.contains(CLASSNAME_SIGNATURE_CONTAINER)
+            ) {
+                shouldDelete = true;
+            }
+
+            if (shouldDelete) {
+                editorContentRootDiv?.removeChild(current);
+            }
+
+            current = next;
+        }
+
+        if (args.returnType === 'html') {
+            return editorContentRootDiv.innerHTML;
+        }
+
+        return editorContentRootDiv.innerText;
+    }
+
+    return '';
+};
+
+type SetContentBeforeBlockquoteOptions = (
+    | {
+          editorType: 'plaintext';
+          /** Plain text type only: User address signature in plain text string */
+          addressSignature: string;
+      }
+    | {
+          editorType: 'html';
+          /**
+           * HTML type only:
+           * HTML content will be wrapped in a div
+           * containing the default font-family and font-size styles
+           *
+           * Expected string format example: 'font-family: Arial, serif; font-size: 12px;'
+           */
+          wrapperDivStyles: string;
+          messageID: string;
+      }
+) & {
+    /** Content to add */
+    content: string;
+    /** Editor content to parse */
+    editorContent: string;
+};
+
+export const setMessageContentBeforeBlockquote = (args: SetContentBeforeBlockquoteOptions) => {
+    const { editorType, editorContent, content } = args;
+    if (!editorContent) {
+        return content;
+    }
+
+    if ('html' === editorType) {
+        const { wrapperDivStyles, messageID } = args;
+        const editorContentRootDiv = new DOMParser().parseFromString(editorContent, 'text/html').body as HTMLElement;
+        let shouldDelete = true;
+
+        // Signature div is in every mail even if it's empty. Because of that and
+        // in order to get mail content only, we can remove everything after the signature div
+        let current = editorContentRootDiv?.childNodes[0];
+        while (current) {
+            const next = current.nextSibling;
+            if (
+                shouldDelete &&
+                current instanceof HTMLElement &&
+                current.classList.contains(CLASSNAME_SIGNATURE_CONTAINER)
+            ) {
+                shouldDelete = false;
+            }
+
+            if (shouldDelete) {
+                editorContentRootDiv?.removeChild(current);
+            }
+
+            // @ts-expect-error current can be null
+            current = next;
+        }
+
+        const divEl = document.createElement('div');
+        divEl.setAttribute('style', wrapperDivStyles);
+        divEl.innerHTML = prepareContentToInsert(content, false, messageID);
+        divEl.appendChild(document.createElement('br'));
+        divEl.appendChild(document.createElement('br'));
+
+        if (editorContentRootDiv?.firstChild) {
+            editorContentRootDiv?.insertBefore(divEl, editorContentRootDiv?.firstChild);
+        } else {
+            editorContentRootDiv?.appendChild(divEl);
+        }
+
+        return editorContentRootDiv.innerHTML;
+    }
+
+    if ('plaintext' === editorType) {
+        const { addressSignature } = args;
+        const signatureIndex = editorContent.indexOf(addressSignature);
+        const postContent = signatureIndex === -1 ? '' : editorContent.slice(signatureIndex);
+
+        // If no signature set, return only the content, otherwise we will keep the previous content while replacing the content in Scribe
+        return addressSignature ? content + postContent : content;
+    }
+
+    throw new Error('Unsupported editor type');
+};
+
+export const insertBodyIntoNewDraft = (message: MessageState, bodyBeforeQuote: string, mailSettings: MailSettings) => {
+    if (testIsPlainText(message.data)) {
+        // Not setMessageContentBeforeBlockquote: its plaintext branch drops the quote when the address has no signature.
+        const content = prepareContentToInsert(bodyBeforeQuote, true, message.localID);
+
+        return insertTextBeforeContent(message, content, mailSettings, false);
+    }
+
+    return setMessageContentBeforeBlockquote({
+        editorType: 'html',
+        editorContent: message.messageDocument?.document?.innerHTML ?? '',
+        content: bodyBeforeQuote,
+        wrapperDivStyles: getComposerDefaultFontStyles(mailSettings),
+        messageID: message.localID,
+    });
+};

@@ -1,0 +1,170 @@
+import { type ReactNode, useState } from 'react';
+
+import { c } from 'ttag';
+
+import { useNotifications } from '@proton/app-context/useNotifications';
+import { Button } from '@proton/atoms/Button/Button';
+import { ButtonLike } from '@proton/atoms/Button/ButtonLike';
+import { Collapsible } from '@proton/atoms/Collapsible/Collapsible';
+import { CollapsibleContent } from '@proton/atoms/Collapsible/CollapsibleContent';
+import { CollapsibleHeader } from '@proton/atoms/Collapsible/CollapsibleHeader';
+import { Href } from '@proton/atoms/Href/Href';
+import { Tooltip } from '@proton/atoms/Tooltip/Tooltip';
+import Copy from '@proton/components/components/button/Copy';
+import IconRow from '@proton/components/components/iconRow/IconRow';
+import useDrawer from '@proton/components/hooks/drawer/useDrawer';
+import { IcChevronDown } from '@proton/icons/icons/IcChevronDown';
+import { IcCrossBig } from '@proton/icons/icons/IcCrossBig';
+import { IcVideoCamera } from '@proton/icons/icons/IcVideoCamera';
+import { MEET_APP_NAME } from '@proton/shared/lib/constants';
+import { validateEmailAddress } from '@proton/shared/lib/helpers/email';
+import clsx from '@proton/utils/clsx';
+
+import { EventDetailsRow } from './EventDetailsRow';
+import { type BaseMeetingUrls, VIDEO_CONF_SERVICES } from './constants';
+import { getSafeConferenceUrl, getVideoConfCopy, isVideoConfOnlyLink } from './videoConfHelpers';
+
+import './VideoConferencing.scss';
+
+export type VideoConferenceLocation = 'event-details' | 'event-form';
+
+interface Props {
+    location: VideoConferenceLocation;
+    data: BaseMeetingUrls;
+    handleDelete?: () => void;
+    overrideJoinButton?: ReactNode;
+}
+
+export const VideoConferencingWidget = ({ data, location, handleDelete, overrideJoinButton }: Props) => {
+    const { createNotification } = useNotifications();
+    const [isExpanded, setIsExpanded] = useState(false);
+
+    const { isDrawerApp } = useDrawer();
+
+    const safeUrl = getSafeConferenceUrl(data.meetingUrl);
+    const safeJoiningInstructionsUrl = getSafeConferenceUrl(data.joiningInstructions);
+
+    if (!safeUrl) {
+        return null;
+    }
+
+    const hasOnlyLink = isVideoConfOnlyLink(data, safeJoiningInstructionsUrl);
+    const joinText = getVideoConfCopy(data.service);
+
+    const handleOnCopy = () => {
+        createNotification({
+            text: c('Notification').t`Link copied to clipboard`,
+        });
+    };
+
+    const toggleExpanded = () => {
+        setIsExpanded((prev) => !prev);
+    };
+
+    return (
+        <IconRow
+            icon={<IcVideoCamera />}
+            containerClassName="grow"
+            className="items-center w-full video-conferencing-widget cursor-pointer"
+            title={c('Label').t`Video conference`}
+        >
+            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+            <div
+                aria-label={c('Action').t`Expand video conferencing widget`}
+                aria-expanded={isExpanded}
+                className="group-hover-opacity-container"
+                onClick={toggleExpanded}
+            >
+                <div className={clsx('flex items-center justify-space-between flex-nowrap', !hasOnlyLink && 'mb-2')}>
+                    {overrideJoinButton ? (
+                        overrideJoinButton
+                    ) : (
+                        <ButtonLike as={Href} href={safeUrl} shape="solid" color="norm">
+                            {joinText}
+                        </ButtonLike>
+                    )}
+
+                    <div className={clsx('flex flex-nowrap', isDrawerApp ? 'gap-1' : 'gap-2')}>
+                        <Copy
+                            value={safeUrl}
+                            shape="ghost"
+                            size="small"
+                            className="group-hover:opacity-100 color-weak"
+                            onCopy={handleOnCopy}
+                        />
+                        {location === 'event-form' && (
+                            <Tooltip
+                                title={
+                                    data.service === VIDEO_CONF_SERVICES.ZOOM
+                                        ? c('Label').t`Remove Zoom video conference`
+                                        : c('Label').t`Remove ${MEET_APP_NAME} video conference`
+                                }
+                            >
+                                <Button icon shape="ghost" size="small" onClick={handleDelete}>
+                                    <IcCrossBig alt={c('Action').t`Remove video conference`} />
+                                </Button>
+                            </Tooltip>
+                        )}
+                    </div>
+                </div>
+                {data.meetingId && data.service === VIDEO_CONF_SERVICES.ZOOM && (
+                    <EventDetailsRow
+                        prefix={c('Zoom Meeting').t`Meeting ID:`}
+                        suffix={data.meetingId}
+                        copySuccessText={c('Notification').t`Meeting ID copied to clipboard`}
+                    />
+                )}
+                {data.password && data.service === VIDEO_CONF_SERVICES.ZOOM && (
+                    <EventDetailsRow
+                        prefix={c('Zoom Meeting').t`Passcode:`}
+                        suffix={data.password}
+                        copySuccessText={c('Notification').t`Passcode copied to clipboard`}
+                    />
+                )}
+                {!hasOnlyLink && (
+                    <Collapsible className="mt-2" expandByDefault={isExpanded} externallyControlled>
+                        <CollapsibleHeader
+                            disableFullWidth
+                            onClick={toggleExpanded}
+                            className="collapsible-header-hover-color"
+                        >
+                            <button
+                                type="button"
+                                className="m-0 flex gap-1 text-sm color-weak"
+                                onClick={toggleExpanded}
+                            >
+                                {isExpanded ? c('Google Meet').t`Less details` : c('Google Meet').t`More details`}
+                                <IcChevronDown className={isExpanded ? 'rotateX-180' : ''} />
+                            </button>
+                        </CollapsibleHeader>
+
+                        <CollapsibleContent onClick={(e) => e.stopPropagation()}>
+                            <section className="mt-2">
+                                {data.meetingHost && validateEmailAddress(data.meetingHost) && (
+                                    <EventDetailsRow
+                                        linkMode
+                                        prefix={c('Google Meet').t`Meeting host:`}
+                                        suffix={data.meetingHost}
+                                        copySuccessText={c('Notification').t`Meeting host copied to clipboard`}
+                                    />
+                                )}
+
+                                <div>
+                                    <p className="m-0">{c('Google Meet').t`Meeting link:`}</p>
+                                    <Href className="block mb-2 text-ellipsis max-w-full" href={safeUrl}>
+                                        {safeUrl}
+                                    </Href>
+                                </div>
+
+                                {safeJoiningInstructionsUrl && (
+                                    <Href href={safeJoiningInstructionsUrl}>{c('Google Meet')
+                                        .t`Joining instructions`}</Href>
+                                )}
+                            </section>
+                        </CollapsibleContent>
+                    </Collapsible>
+                )}
+            </div>
+        </IconRow>
+    );
+};

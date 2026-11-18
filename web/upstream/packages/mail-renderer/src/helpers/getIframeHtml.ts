@@ -1,0 +1,125 @@
+import { locateHead } from '@proton/mail-message/helpers/locateHead';
+import type { MessageState } from '@proton/mail-message/store/messages/messagesTypes';
+import { neutralizeStyleBreakout } from '@proton/sanitize/escape';
+
+import {
+    MESSAGE_IFRAME_PRINT_CLASS,
+    MESSAGE_IFRAME_PRINT_FOOTER_ID,
+    MESSAGE_IFRAME_PRINT_HEADER_ID,
+    MESSAGE_IFRAME_ROOT_ID,
+} from '../constants';
+
+type Options = {
+    emailContent: string;
+    messageDocument: Required<MessageState>['messageDocument']['document'];
+    isPlainText: boolean;
+    themeCSSVariables: string;
+    isPrint: boolean;
+    iframeCSSStyles: string;
+};
+
+const escapeHTMLAttribute = (value: string) =>
+    value
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+const getIframeHtml = ({
+    emailContent,
+    messageDocument,
+    isPlainText,
+    themeCSSVariables,
+    isPrint,
+    iframeCSSStyles,
+}: Options) => {
+    /**
+     * Defense-in-depth: `messageHead` is serialized to a string and written verbatim into
+     * the iframe document. `<style>` is a rawtext element, so a `</style>` inside a style's
+     * text content would terminate the element and inject live HTML (mXSS). Neutralize any
+     * such breakout on each head `<style>` before serialization. This is idempotent for
+     * properly sanitized styles (which keep CSS escapes) and does not affect legitimate
+     * closing tags, which live in the element structure rather than the text content.
+     */
+    messageDocument?.querySelectorAll('head style').forEach((styleTag) => {
+        if (styleTag.textContent) {
+            styleTag.textContent = neutralizeStyleBreakout(styleTag.textContent);
+        }
+    });
+
+    const messageHead = locateHead(messageDocument) || '';
+    const body = messageDocument?.querySelector('body');
+    const bodyStyles = body?.getAttribute('style');
+
+    const bodyClasses = body?.getAttribute('class');
+
+    const htmlLang = messageDocument?.getAttribute('lang');
+    const bodyLang = body?.getAttribute('lang');
+    const htmlLangAttr = htmlLang ? `lang="${escapeHTMLAttribute(htmlLang)}"` : '';
+    const bodyLangAttr = bodyLang ? `lang="${escapeHTMLAttribute(bodyLang)}"` : '';
+
+    /**
+     * About this line:
+     * <div style="width: 100% !important;padding-bottom:10px;!important">${emailContent}</div>
+     * Padding bottom is needed for the scrollbar
+     */
+    // Plain text needs content needs to have no spaces in order to be correctly displayed
+    if (isPlainText) {
+        const emailHead = `<head><style>${themeCSSVariables}</style><style>${iframeCSSStyles}</style>${messageHead}</head>`;
+        const emailBody = `<body ${bodyLangAttr}><div id="${MESSAGE_IFRAME_ROOT_ID}" class="proton-plain-text ${
+            isPrint ? MESSAGE_IFRAME_PRINT_CLASS : ''
+        }">${
+            isPrint ? `<div id="${MESSAGE_IFRAME_PRINT_HEADER_ID}"></div>` : ''
+        }<div style="width: 100% !important;padding-bottom:10px;!important">${emailContent}</div>${
+            isPrint ? `<div id="${MESSAGE_IFRAME_PRINT_FOOTER_ID}"></div>` : ''
+        }</div></body>`;
+
+        return `<html ${htmlLangAttr}>${emailHead}${emailBody}</html>`;
+    }
+
+    let htmlContent = emailContent;
+
+    if (bodyClasses || bodyStyles) {
+        const classAttr = bodyClasses ? `class="${escapeHTMLAttribute(bodyClasses.trim())}"` : '';
+        const styleAttr = bodyStyles ? `style="${escapeHTMLAttribute(bodyStyles)}"` : '';
+        const attrs = [classAttr, styleAttr].filter(Boolean).join(' ');
+        htmlContent = `<div ${attrs}>${emailContent}</div>`;
+    }
+
+    /**
+     * Some infos about those `!important` values:
+     * In order to compute correctly the height and avoid any kind of override
+     * we had to put those inline style values with important on two divs.
+     *
+     * About this line:
+     * <div style="width: 100% !important;padding-bottom:10px;!important">${emailContent}</div>
+     * Padding bottom is needed for the scrollbar
+     */
+    return `
+      <!DOCTYPE html>
+      <html ${htmlLangAttr}>
+        <head>
+          <style>${themeCSSVariables}</style>
+          <meta name="viewport" content="width=device-width">
+          <style>${iframeCSSStyles}</style>
+          ${messageHead}
+        </head>
+        <body ${bodyLangAttr}>
+        <div id="${MESSAGE_IFRAME_ROOT_ID}" ${isPrint ? `class="${MESSAGE_IFRAME_PRINT_CLASS}"` : ''}>
+          ${isPrint ? `<div id="${MESSAGE_IFRAME_PRINT_HEADER_ID}"></div>` : ''}
+          <div ${
+              isPrint ? 'class="proton-print-content reset4print"' : ''
+          } style="display: block !important; width: 100% !important;">
+          <div style="width: 100% !important;padding-bottom:10px;!important">
+          ${htmlContent}
+          </div>
+          </div>
+          ${isPrint ? `<div id="${MESSAGE_IFRAME_PRINT_FOOTER_ID}"></div>` : ''}
+        </div>
+        </body>
+      </html>
+    `;
+};
+
+export default getIframeHtml;

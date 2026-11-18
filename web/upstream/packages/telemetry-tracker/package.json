@@ -1,0 +1,36 @@
+{
+    "name": "@proton/telemetry-tracker",
+    "description": "Type-safe telemetry tracker: one singleton, typed event definitions, keyed funnel timers",
+    "license": "GPL-3.0",
+    "sideEffects": false,
+    "type": "module",
+    "exports": {
+        "./lib/context": "./lib/context.ts",
+        "./lib/defineEvent": "./lib/defineEvent.ts",
+        "./lib/dimensions": "./lib/dimensions.ts",
+        "./lib/timers": "./lib/timers.ts",
+        "./lib/tracker": "./lib/tracker.ts",
+        "./testing": "./testing/index.ts"
+    },
+    "scripts": {
+        "check:types": "tsc --checkers 1",
+        "lint": "oxlint --quiet",
+        "test": "vitest",
+        "test:ci": "pnpm run test --run",
+        "test:watch": "pnpm run test --watch"
+    },
+    "dependencies": {
+        "@proton/shared": "workspace:^"
+    },
+    "devDependencies": {
+        "@proton/oxlint-config": "workspace:^",
+        "@proton/vitest-config": "workspace:^",
+        "@types/node": "catalog:",
+        "@types/webpack-env": "catalog:",
+        "@typescript/native": "catalog:",
+        "oxlint": "catalog:",
+        "oxlint-tsgolint": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:"
+    }
+}
