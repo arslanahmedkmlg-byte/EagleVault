@@ -20,10 +20,19 @@ export interface VaultwardenPasswordLoginOptions {
  * Performs server-directed KDF discovery, Bitwarden-compatible derivation,
  * then the unauthenticated identity password grant. It does not persist tokens.
  */
+export interface VaultwardenUnlockedSession {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: string;
+  scope?: string;
+  userKey: Uint8Array;
+}
+
 export async function loginToVaultwarden(
   options: VaultwardenPasswordLoginOptions,
   cryptoProvider = new BitwardenCryptoProvider(),
-): Promise<IdentityTokenResponse> {
+): Promise<VaultwardenUnlockedSession> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const prelogin = await fetchVaultwardenPrelogin(options.serverUrl, options.email, fetchImpl);
   const masterKey = cryptoProvider.deriveMasterKey(
@@ -38,7 +47,7 @@ export async function loginToVaultwarden(
       masterKey,
     );
     const identity = new VaultwardenIdentityClient(options.serverUrl, fetchImpl);
-    return await identity.passwordGrant({
+    const tokens: IdentityTokenResponse = await identity.passwordGrant({
       username: options.email,
       authenticationHash,
       clientId: options.clientId,
@@ -49,6 +58,27 @@ export async function loginToVaultwarden(
       twoFactorProvider: options.twoFactorProvider,
       twoFactorRemember: options.twoFactorRemember,
     });
+    const encryptedUserKey =
+      tokens.Key ??
+      tokens.UserDecryptionOptions?.MasterPasswordUnlock?.MasterKeyWrappedUserKey ??
+      tokens.UserDecryptionOptions?.MasterPasswordUnlock?.MasterKeyEncryptedUserKey;
+    if (!encryptedUserKey) {
+      throw new Error("Vaultwarden authenticated the account but did not return a master-password-wrapped user key.");
+    }
+    const userKey = cryptoProvider.decryptUserKeyWithMasterPassword(
+      encryptedUserKey,
+      options.masterPassword,
+      prelogin.emailSalt,
+      prelogin.kdf,
+    );
+    return {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_in: tokens.expires_in,
+      token_type: tokens.token_type,
+      ...(tokens.scope ? { scope: tokens.scope } : {}),
+      userKey,
+    };
   } finally {
     masterKey.fill(0);
   }

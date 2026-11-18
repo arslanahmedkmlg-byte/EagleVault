@@ -171,3 +171,182 @@
 @media (max-width: 480px) {
     .eaglevault__panel { padding: 27px 22px; }
 }
+.eaglevault__warning {
+    margin: 0 0 16px;
+    padding: 12px;
+    border: 1px solid rgba(245, 183, 86, .35);
+    border-radius: 10px;
+    color: #f5d39b;
+    background: rgba(245, 183, 86, .08);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.eaglevault__items {
+    display: grid;
+    gap: 7px;
+    max-height: 340px;
+    margin: 20px 0;
+    overflow-y: auto;
+}
+
+.eaglevault__item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--ev-border);
+    border-radius: 11px;
+    color: var(--ev-text);
+    background: #14161b;
+    cursor: pointer;
+    text-align: left;
+}
+
+.eaglevault__item:hover,
+.eaglevault__item.is-selected {
+    border-color: var(--ev-accent);
+    background: rgba(139, 131, 255, .09);
+}
+
+.eaglevault__item-title {
+    overflow: hidden;
+    font-size: 13px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.eaglevault__item-subtitle {
+    grid-column: 1;
+    overflow: hidden;
+    color: var(--ev-muted);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.eaglevault__item-type {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+    color: var(--ev-muted);
+    font-size: 10px;
+}
+
+.eaglevault__details {
+    display: grid;
+    gap: 12px;
+    margin: 18px 0;
+    padding: 16px;
+    border: 1px solid var(--ev-border);
+    border-radius: 12px;
+    background: #14161b;
+}
+
+.eaglevault__details-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.eaglevault__details h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 650;
+}
+
+.eaglevault__details-heading span {
+    color: var(--ev-muted);
+    font-size: 11px;
+}
+
+.eaglevault__details p {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+}
+
+.eaglevault__details p span,
+.eaglevault__password label {
+    color: var(--ev-muted);
+    font-size: 11px;
+}
+
+.eaglevault__details p strong {
+    font-weight: 600;
+}
+
+.eaglevault__password {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+}
+
+.eaglevault__password label {
+    grid-column: 1 / -1;
+}
+
+.eaglevault__password input {
+    min-width: 0;
+    min-height: 38px;
+    padding: 0 10px;
+    border: 1px solid var(--ev-border);
+    border-radius: 8px;
+    color: var(--ev-text);
+    background: #0e1014;
+    font: inherit;
+    font-size: 12px;
+}
+
+.eaglevault__password button {
+    padding: 0 13px;
+    border: 1px solid var(--ev-border);
+    border-radius: 8px;
+    color: #d3d0ff;
+    background: #242333;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 650;
+}
+
+.eaglevault__notes {
+    white-space: pre-wrap;
+}
+
+.eaglevault__detail-row {
+    display: grid;
+    grid-template-columns: minmax(90px, .55fr) minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px;
+    padding-top: 9px;
+    border-top: 1px solid var(--ev-border);
+    font-size: 12px;
+}
+
+.eaglevault__detail-row > span {
+    color: var(--ev-muted);
+    font-size: 11px;
+}
+
+.eaglevault__detail-row > strong {
+    overflow-wrap: anywhere;
+    font-weight: 550;
+    white-space: pre-wrap;
+}
+
+.eaglevault__detail-row > button {
+    padding: 3px 8px;
+    border: 1px solid var(--ev-border);
+    border-radius: 7px;
+    color: #d3d0ff;
+    background: #242333;
+    cursor: pointer;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 650;
+}

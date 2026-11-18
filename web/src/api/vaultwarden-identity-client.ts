@@ -4,6 +4,14 @@ export interface IdentityTokenResponse {
   expires_in: number;
   token_type: string;
   scope?: string;
+  Key?: string;
+  UserDecryptionOptions?: {
+    MasterPasswordUnlock?: {
+      MasterKeyEncryptedUserKey?: string;
+      MasterKeyWrappedUserKey?: string;
+      Salt?: string;
+    } | null;
+  };
 }
 
 export interface PasswordGrant {

@@ -14,7 +14,7 @@ Current transport operations:
 - PUT /api/folders/{id}
 - DELETE /api/folders/{id}
 
-The REST transport remains separate from identity and cryptography: it accepts an access-token callback and exposes sync/cipher/folder calls. Identity pre-login/password grant lives in src/auth and src/api/vaultwarden-identity-client.ts; Bitwarden-compatible KDF and field crypto live in src/crypto. Cipher decryption/mapping, secure session persistence, token refresh lifecycle and CRUD UI remain incomplete.
+The REST transport remains separate from identity and cryptography: it accepts an access-token callback and exposes sync/cipher/folder calls. Identity pre-login/password grant lives in src/auth and src/api/vaultwarden-identity-client.ts; Bitwarden-compatible KDF and field crypto live in src/crypto. Personal-vault user-key and common cipher-field decryption are now implemented. Mapping into Proton's native item view model, secure session persistence, token refresh lifecycle, organization keys, remaining cipher subtypes and CRUD UI remain incomplete.
 
 Run transport tests from repository root:
 node --experimental-strip-types --test tests/contracts/vaultwarden-client.test.mjs
@@ -25,7 +25,7 @@ The Proton Pass Web application is now wired to an isolated EagleVault login/syn
 
 The adapter in `src/crypto` uses the pinned official `@bitwarden/sdk-internal` GPL-3.0 package. Call `initializeBitwardenCryptoSdk()` once during browser application startup before using `BitwardenCryptoProvider`. See [the SDK integration notes](../docs/CRYPTO-SDK-INTEGRATION.md).
 
-The Bitwarden SDK is initialized by the EagleVault login flow before password authentication. Vault decryption, secure session persistence and Android parity remain incomplete; do not use production credentials.
+The Bitwarden SDK is initialized by the EagleVault login flow before password authentication. Full cipher coverage, Proton item-view mapping, secure session persistence and Android parity remain incomplete; do not use production credentials.
 # EagleVault Web application mode
 
 The Proton Pass Web application is the presentation foundation. The upstream default mode remains unchanged when no query parameter is supplied.

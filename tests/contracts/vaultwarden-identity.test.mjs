@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { VaultwardenIdentityClient } from "../../web/src/api/vaultwarden-identity-client.ts";
 import { loginToVaultwarden } from "../../web/src/auth/vaultwarden-password-login.ts";
+import { BitwardenCryptoProvider } from "../../web/src/crypto/bitwarden-crypto.ts";
+import { readFileSync } from "node:fs";
 
 test("identity password grant sends form-encoded fields without a bearer token", async () => {
   let captured;
@@ -58,10 +60,21 @@ test("refresh grant sends only the refresh token and client id", async () => {
 
 test("password login performs prelogin before the identity request and never submits plaintext", async () => {
   const calls = [];
+  const vectors = JSON.parse(readFileSync(new URL("../../shared/test-vectors/bitwarden-crypto-v1.json", import.meta.url), "utf8"));
+  const crypto = new BitwardenCryptoProvider();
+  let derivedMasterKey;
+  const cryptoSpy = {
+    deriveMasterKey: (...args) => {
+      derivedMasterKey = crypto.deriveMasterKey(...args);
+      return derivedMasterKey;
+    },
+    deriveMasterPasswordAuthenticationHash: crypto.deriveMasterPasswordAuthenticationHash.bind(crypto),
+    decryptUserKeyWithMasterPassword: crypto.decryptUserKeyWithMasterPassword.bind(crypto),
+  };
   const result = await loginToVaultwarden({
     serverUrl: "https://vault.example.test",
-    email: "User@Example.Test",
-    masterPassword: "synthetic password for test only",
+    email: vectors.masterPasswordKdf.email,
+    masterPassword: vectors.masterPasswordKdf.masterPassword,
     clientId: "web",
     deviceIdentifier: "device-fixture",
     deviceName: "EagleVault tests",
@@ -74,9 +87,10 @@ test("password login performs prelogin before the identity request and never sub
       return Response.json({
         access_token: "synthetic-access", refresh_token: "synthetic-refresh",
         expires_in: 3600, token_type: "Bearer",
+        Key: vectors.masterPasswordKdf.encryptedUserKey,
       });
     },
-  });
+  }, cryptoSpy);
   assert.equal(calls.length, 2);
   assert.match(calls[0].url, /accounts\/prelogin$/);
   assert.match(calls[1].url, /identity\/connect\/token$/);
@@ -84,6 +98,10 @@ test("password login performs prelogin before the identity request and never sub
   assert.equal(identityForm.get("grant_type"), "password");
   assert.notEqual(identityForm.get("password"), "synthetic password for test only");
   assert.equal(result.access_token, "synthetic-access");
+  assert.equal(result.Key, undefined);
+  assert.equal(result.UserDecryptionOptions, undefined);
+  assert.deepEqual(result.userKey, new Uint8Array(Buffer.from(vectors.symmetricEncryption.userKeyBase64, "base64")));
+  assert.ok(derivedMasterKey.every((byte) => byte === 0), "temporary master key must be zeroed after login");
 });
 
 function totpProvider() {

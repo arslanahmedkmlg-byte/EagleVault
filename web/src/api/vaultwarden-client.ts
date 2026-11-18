@@ -57,8 +57,8 @@ export class VaultwardenClient {
     await this.request<void>("/ciphers/" + encodeURIComponent(id), { method: "DELETE" });
   }
 
-  async listFolders(): Promise<ListEnvelope<unknown>> {
-    return this.request<ListEnvelope<unknown>>("/folders", { method: "GET" });
+  async listFolders(): Promise<ListEnvelope<FolderDataDto>> {
+    return this.request<ListEnvelope<FolderDataDto>>("/folders", { method: "GET" });
   }
 
   async createFolder(folder: FolderDataDto): Promise<unknown> {

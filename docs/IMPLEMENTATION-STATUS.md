@@ -17,7 +17,7 @@ Last updated: 2026-11-19
 - Vaultwarden cipher/folder route surface documented from local source.
 
 ## Remaining work
-- Decrypt the protected user key returned by identity and decrypt Bitwarden Cipher fields.
+- Expand cipher decryption to all supported Bitwarden subtypes and add robust handling for malformed/unsupported items.
 - Map Bitwarden Cipher and Folder DTOs into the Proton Pass private-vault view model without losing supported fields.
 - Implement a reviewed secure browser session store and access-token refresh/lock lifecycle.
 - Wire create/update/delete and folder operations into the UI.
@@ -26,7 +26,7 @@ Last updated: 2026-11-19
 - No live Vaultwarden account has been used; production credential storage remains disabled.
 
 ## Next work
-1. Complete user-key and cipher decryption using the pinned Bitwarden SDK.
+1. Expand the Bitwarden-to-EagleVault decrypted item model to cover every personal-vault cipher subtype.
 2. Implement the Bitwarden-to-Proton private-vault DTO mapper and preservation tests.
 3. Add secure session persistence, refresh, lock/unlock, and logout.
 4. Wire cipher and folder CRUD into the Web view.
@@ -77,9 +77,9 @@ The imported Proton Web API factory calls Proton shared API configuration and pr
 - The orchestrator zeroes its temporary master-key byte array after authentication.
 - All 20 Web contract tests pass using synthetic fixtures.
 - Android audit found Bitwarden's official Kotlin UniFFI SDK. Native integration is not yet built: this device has no JDK, Rust toolchain, or Android NDK. Do not substitute Proton's crypto for Bitwarden's format.
-- Credential storage and full vault unlock remain disabled until secure session storage, user-key/cipher decryption, Android integration, and cross-client vectors pass.
+- Secure session persistence and full production unlock remain disabled until secure token lifecycle, broader cipher coverage, Android parity, and end-to-end tests pass.
 
-- Added shared synthetic crypto vectors in shared/test-vectors/bitwarden-crypto-v1.json; Web verifies fixed KDF/authentication outputs and decrypts a fixed AES-256-CBC-HMAC fixture.
+- Added shared synthetic crypto vectors in shared/test-vectors/bitwarden-crypto-v1.json; Web verifies fixed KDF/authentication outputs, user-key unwrap, per-cipher-key unwrap, and encrypted login/custom-field decryption.
 - Aligned the Web SDK package to 0.2.0-main.1241, whose embedded source revision is 6238472451e4fa7b5c592b4b24a84e950a258957. This matches the successful Bitwarden Android SDK build workflow run 43405701364 source revision.
 - Full Web contract suite now passes 20/20.
 
@@ -91,12 +91,17 @@ The imported Proton Web API factory calls Proton shared API configuration and pr
 - No upstream Proton UI source files were changed during the initial audit; the later Web milestone adds only an isolated App.tsx bootstrap branch and a separate EagleVault login component.
 
 - Added an isolated Proton Web app mode at `?eaglevault=1`. It bypasses Proton AuthService startup, Proton crypto worker/API exposure, connectivity initialization and Sentry setup, then renders a dedicated EagleVault login page.
-- The login page initializes Bitwarden WASM, authenticates against the user-entered Vaultwarden URL, then verifies access by fetching sync and folders. It shows counts only; it does not claim vault decryption is complete.
+- The login page initializes Bitwarden WASM, authenticates against the user-entered Vaultwarden URL, unwraps the protected user key, fetches sync/folders, and decrypts supported personal ciphers. Password values are masked until selected.
 - Browser tokens remain memory-only and are discarded on reload/sign-out. No real credentials have been used.
 - Proton Pass Web TypeScript check and production build now pass. The isolated EagleVault branch is bundled; no live Vaultwarden credentials have been tested. The full lint command could not be verified because oxlint panicked in this environment.
 
 - 2026-11-19 Web build milestone: `?eaglevault=1` selects the EagleVault login view within the Proton app shell while bypassing Proton account/session, Redux store/sagas, PassCrypto exposure, Proton API exposure, telemetry bootstrap and connectivity startup.
 - Added `@bitwarden/sdk-internal@0.2.0-main.1241` to the Proton Pass workspace and pnpm lockfile. This version meets the repository's minimum-release-age rule and matches successful Android SDK workflow run 43405701364.
 - Proton Pass Web `check:types` passed; `build:web` passed and emitted the login bundle. The built bundle was checked for the EagleVault login copy and device identifier key.
-- Login is a dedicated EagleVault panel inside the Proton shell (exact Proton form-component reskin remains future work). It performs KDF prelogin, identity password grant, then initial sync and folder requests. The access token remains only in component memory; refresh-token persistence and vault decryption are not implemented.
+- Login is a dedicated EagleVault panel inside the Proton shell (exact Proton form-component reskin remains future work). It performs KDF prelogin, identity password grant, unwraps the master-password-protected user key, fetches sync/folders, and decrypts supported personal-vault fields. Passwords remain hidden until an item is selected. The access token and user key remain in component memory; refresh-token persistence and full CRUD are not implemented.
 - Corrected identity endpoint to `/identity/connect/token` (not `/api/identity/connect/token`).
+
+- Personal-vault unlock milestone: identity response Key is now unwrapped with Bitwarden SDK using the server-provided KDF. The resulting 64-byte user key is held in a component ref and zeroed on sign-out/failure. The temporary master key and per-cipher item keys are zeroed immediately after use, with explicit contract tests.
+- Added a personal-vault cipher decryptor for per-cipher keys, names, notes, login credentials/TOTP/URIs, custom fields, card, identity, SSH key, bank account, driver license, passport, and password history. Organization ciphers are explicitly skipped because organization-key support is not implemented.
+- EagleVault Web now lists decrypted personal items, shows usernames/URIs, and keeps passwords masked until an item is selected and the user presses Reveal. Decrypted objects and user key are cleared on sign-out.
+- Added fixed shared encrypted user-key and item-key/cipher vectors. All 20 Web contract tests pass, including user-key unlock and nested cipher-field decryption.

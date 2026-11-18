@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { pbkdf2Sync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { BitwardenCryptoProvider } from "../../web/src/crypto/bitwarden-crypto.ts";
+import { decryptBitwardenCipher } from "../../web/src/crypto/bitwarden-vault-decryptor.ts";
 
 const crypto = new BitwardenCryptoProvider();
 const accountEmail = "User@Example.Test";
@@ -87,9 +88,39 @@ test("matches the shared Bitwarden crypto test vectors", async () => {
     await crypto.deriveMasterPasswordAuthenticationHash(fixture.masterPassword, master),
     fixture.expectedAuthenticationHashBase64,
   );
+  const userKey = crypto.decryptUserKeyWithMasterPassword(
+    fixture.encryptedUserKey,
+    fixture.masterPassword,
+    fixture.email,
+    fixture.kdf,
+  );
+  assert.equal(Buffer.from(userKey).toString("base64"), vectors.symmetricEncryption.userKeyBase64);
 
   const symmetric = vectors.symmetricEncryption;
   const key = new Uint8Array(Buffer.from(symmetric.userKeyBase64, "base64"));
   assert.equal(key.byteLength, 64);
   assert.equal(crypto.decryptString(symmetric.encrypted, key), symmetric.plaintext);
+
+  const cipherFixture = vectors.cipherDecryption;
+  let temporaryItemKey;
+  const cryptoSpy = {
+    decryptString: (encrypted, decryptionKey) => {
+      if (decryptionKey !== key) temporaryItemKey = decryptionKey;
+      return crypto.decryptString(encrypted, decryptionKey);
+    },
+  };
+  const decrypted = decryptBitwardenCipher(
+    { ...cipherFixture.cipher, key: cipherFixture.cipherKey },
+    key,
+    cryptoSpy,
+  );
+  assert.equal(decrypted.name, cipherFixture.expected.name);
+  assert.equal(decrypted.notes, cipherFixture.expected.notes);
+  assert.equal(decrypted.login.username, cipherFixture.expected.username);
+  assert.equal(decrypted.login.password, cipherFixture.expected.password);
+  assert.equal(decrypted.login.totp, cipherFixture.expected.totp);
+  assert.equal(decrypted.login.uris[0].uri, cipherFixture.expected.uri);
+  assert.equal(decrypted.fields[0].name, cipherFixture.expected.fieldName);
+  assert.equal(decrypted.fields[0].value, cipherFixture.expected.fieldValue);
+  assert.ok(temporaryItemKey.every((byte) => byte === 0), "temporary per-cipher key must be zeroed");
 });
