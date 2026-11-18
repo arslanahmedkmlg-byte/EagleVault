@@ -81,3 +81,10 @@ The imported Proton Web API factory calls Proton shared API configuration and pr
 - Added shared synthetic crypto vectors in shared/test-vectors/bitwarden-crypto-v1.json; Web verifies fixed KDF/authentication outputs and decrypts a fixed AES-256-CBC-HMAC fixture.
 - Aligned the Web SDK package to 0.2.0-main.1245, whose embedded source revision is 56c7617b23501af70221094cdee59e10b2a9d8d2. This matches the successful Bitwarden Android SDK build workflow run 10369 source revision.
 - Full Web contract suite now passes 20/20.
+
+## Proton Web integration audit
+- Audited App.tsx, AuthServiceProvider, Lobby, LobbyContent, AuthStore, PassCryptoWorker, and Proton item view models.
+- Confirmed the Proton login is based on Proton account/fork/session flows; the current Lobby does not expose a local email/master-password form.
+- Confirmed the Proton crypto worker requires Proton user/address/group/share keys and cannot decrypt Bitwarden ciphers.
+- Documented the replacement boundaries and acceptance gates in docs/WEB-INTEGRATION-AUDIT.md.
+- No upstream Proton UI source files were changed during this audit.
