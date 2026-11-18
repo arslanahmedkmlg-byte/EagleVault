@@ -19,6 +19,7 @@
         "test:watch": "jest --watch"
     },
     "dependencies": {
+        "@bitwarden/sdk-internal": "0.2.0-main.1241",
         "@proton/app-context": "workspace:^",
         "@proton/atoms": "workspace:^",
         "@proton/components": "workspace:^",

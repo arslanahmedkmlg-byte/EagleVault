@@ -28,7 +28,7 @@ export class VaultwardenIdentityClient {
     if (base.protocol !== "https:" && base.hostname !== "localhost" && base.hostname !== "127.0.0.1") {
       throw new Error("Vaultwarden server URL must use HTTPS.");
     }
-    this.endpoint = base.toString().replace(/\/$/, "") + "/api/identity/connect/token";
+    this.endpoint = base.toString().replace(/\/$/, "") + "/identity/connect/token";
     this.fetchImpl = fetchImpl;
   }
 
@@ -59,12 +59,25 @@ export class VaultwardenIdentityClient {
   }
 
   private async send(form: URLSearchParams): Promise<IdentityTokenResponse> {
+    const email = form.get("username");
+    const headers: Record<string, string> = {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+      "Bitwarden-Client-Name": "web",
+      "Bitwarden-Client-Version": "1.0.0",
+      "Device-Type": form.get("device_type") ?? "",
+      "Device-Identifier": form.get("device_identifier") ?? "",
+      "Device-Name": form.get("device_name") ?? "",
+    };
+    if (email) {
+      const bytes = new TextEncoder().encode(email);
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      headers["Auth-Email"] = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
     const response = await this.fetchImpl(this.endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
+      headers,
       body: form.toString(),
       credentials: "omit",
       redirect: "error",

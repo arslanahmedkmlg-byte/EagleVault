@@ -1,3 +1,4 @@
+/// <reference path="../types/wasm.d.ts" />
 import * as sdk from "@bitwarden/sdk-internal";
 
 let sdkReady: Promise<void> | undefined;

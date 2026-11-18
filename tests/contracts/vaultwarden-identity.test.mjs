@@ -23,9 +23,13 @@ test("identity password grant sends form-encoded fields without a bearer token",
     twoFactorProvider:  totpProvider(),
     twoFactorRemember: true,
   });
-  assert.equal(captured.url, "https://vault.example.test/api/identity/connect/token");
+  assert.equal(captured.url, "https://vault.example.test/identity/connect/token");
   assert.equal(captured.init.headers.Authorization, undefined);
   assert.equal(captured.init.headers["Content-Type"], "application/x-www-form-urlencoded");
+  assert.equal(captured.init.headers["Bitwarden-Client-Name"], "web");
+  assert.equal(captured.init.headers["Device-Type"], "10");
+  assert.equal(captured.init.headers["Device-Identifier"], "device-fixture");
+  assert.equal(captured.init.headers["Auth-Email"], "dXNlckBleGFtcGxlLnRlc3Q");
   const form = new URLSearchParams(captured.init.body);
   assert.equal(form.get("grant_type"), "password");
   assert.equal(form.get("username"), "user@example.test");

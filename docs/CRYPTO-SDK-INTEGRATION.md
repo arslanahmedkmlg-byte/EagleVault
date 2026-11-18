@@ -5,13 +5,13 @@
 EagleVault Web uses the official Bitwarden SDK crypto implementation rather than a reimplementation:
 
 - npm package: `@bitwarden/sdk-internal`
-- pinned version: `0.2.0-main.1245`
-- SDK source revision embedded in the package: `56c7617b23501af70221094cdee59e10b2a9d8d2`
+- pinned version: `0.2.0-main.1241`
+- SDK source revision embedded in the package: `6238472451e4fa7b5c592b4b24a84e950a258957`
 - package license: GPL-3.0
 - source: https://github.com/bitwarden/sdk-internal
 - package is explicitly described by Bitwarden as internal-use and unsupported; pin it and validate upgrades before adopting them.
 
-The package is WASM-backed in browsers. The package revision was aligned to the matching successful Android SDK build commit (Bitwarden SDK Android workflow run 10369, commit 56c7617). The application must call `initializeBitwardenCryptoSdk()` once during startup before invoking `BitwardenCryptoProvider`. The loader mirrors the official Bitwarden Web client pattern: load the WASM build, call SDK `init`, then `init_sdk`.
+The package is WASM-backed in browsers. The package revision was aligned to the matching successful Android SDK build commit (Bitwarden SDK Android workflow run 43405701364, commit 6238472451e4fa7b5c592b4b24a84e950a258957). The application must call `initializeBitwardenCryptoSdk()` once during startup before invoking `BitwardenCryptoProvider`. The loader mirrors the official Bitwarden Web client pattern: load the WASM build, call SDK `init`, then `init_sdk`.
 
 ## Implemented Web crypto operations
 
@@ -39,7 +39,7 @@ The file `shared/test-vectors/bitwarden-crypto-v1.json` contains synthetic PBKDF
 
 ## Verification performed
 
-The Web contract suite uses the SDK's Node WASM build and synthetic test fixtures. It verifies PBKDF2 and Argon2id derivation, authentication hash derivation, user-key wrap/unwrap, AES-256-CBC-HMAC field round-trip, KDF rejection, password grant sequencing, and refresh grant serialization.
+The Web contract suite uses the SDK's Node WASM build and synthetic test fixtures. The Proton Web production build and TypeScript check also pass with the SDK dependency installed in the Proton Pass workspace. It verifies PBKDF2 and Argon2id derivation, authentication hash derivation, user-key wrap/unwrap, AES-256-CBC-HMAC field round-trip, KDF rejection, password grant sequencing, and refresh grant serialization.
 
 Run:
 

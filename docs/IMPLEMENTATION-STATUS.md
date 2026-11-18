@@ -16,21 +16,22 @@ Last updated: 2026-11-19
 - Initial domain, API transport and crypto-boundary TypeScript contracts added.
 - Vaultwarden cipher/folder route surface documented from local source.
 
-## Not yet implemented
-- No Bitwarden cryptographic implementation has been integrated.
-- No login/token flow, API transport, sync repository or UI adapter is production-ready.
-- No Android Vaultwarden adapter is wired into the imported Android app.
-- The Web transport is a standalone adapter and is not yet wired into Proton's API factory, auth store, crypto worker or sync engine.
-- No cross-platform crypto or live Vaultwarden integration tests have passed.
+## Remaining work
+- Decrypt the protected user key returned by identity and decrypt Bitwarden Cipher fields.
+- Map Bitwarden Cipher and Folder DTOs into the Proton Pass private-vault view model without losing supported fields.
+- Implement a reviewed secure browser session store and access-token refresh/lock lifecycle.
+- Wire create/update/delete and folder operations into the UI.
+- Build and integrate the official Android UniFFI SDK; the Android API adapter remains transport-only.
+- Run cross-platform vectors and end-to-end tests against a disposable Vaultwarden server.
+- No live Vaultwarden account has been used; production credential storage remains disabled.
 
 ## Next work
-1. Pin exact upstream commits in docs/UPSTREAM-REVISIONS.md.
-2. Review dependency licenses and build prerequisites.
-3. Build an executable TypeScript API contract test harness.
-4. Implement Web transport and auth only after identity route behavior is verified.
-5. Implement Android equivalents against the same contracts.
-6. Add crypto only after official golden vectors are available.
-7. Bring in Proton UI source selectively with original attribution and build dependencies.
+1. Complete user-key and cipher decryption using the pinned Bitwarden SDK.
+2. Implement the Bitwarden-to-Proton private-vault DTO mapper and preservation tests.
+3. Add secure session persistence, refresh, lock/unlock, and logout.
+4. Wire cipher and folder CRUD into the Web view.
+5. Integrate the official Kotlin UniFFI SDK in Android and consume the same shared vectors.
+6. Validate the complete Web/Android lifecycle against a disposable Vaultwarden instance.
 
 ## Web transport milestone
 - Added a small authenticated Vaultwarden REST client for sync, cipher CRUD and folder CRUD.
@@ -39,13 +40,13 @@ Last updated: 2026-11-19
 - Added Node built-in tests for URL validation, bearer headers, sync URL, cipher POST, typed errors and encoded delete IDs.
 - Test command: node --experimental-strip-types --test tests/contracts/vaultwarden-client.test.mjs
 - Result at this milestone: 5 passed, 0 failed.
-- This is a transport layer only. Token acquisition/refresh, crypto, DTO mapping, UI wiring and Android implementation remain outstanding.
+- This REST transport remains a separate layer. Identity and Bitwarden crypto were added later; secure token lifecycle, cipher DTO mapping, full UI CRUD and Android crypto integration remain outstanding.
 
 ## Build environment findings
 - Node.js v24.22.3 is available on EC2AMAZ-RM1TCO7.
 - The Web transport's five Node built-in tests pass using Node's TypeScript strip mode.
 - Java/JDK is not installed on the device, so Android Gradle builds cannot currently run there.
-- The Web workspace declares pnpm 12.18.0; dependency installation and full application build have not yet been attempted.
+- The Web workspace declares pnpm 12.18.0. A filtered dependency install and full Proton Pass Web production build were subsequently completed; see the 2026-11-19 Web build milestone below.
 
 ## Android API adapter milestone
 - Added the isolated Gradle module pass:eaglevault:api under android/upstream.
@@ -59,27 +60,27 @@ The imported Proton Web API factory calls Proton shared API configuration and pr
 
 - 2026-11-19 crypto/auth audit: documented Bitwarden KDF and legacy authentication-hash requirements in docs/CRYPTO-AUTH-AUDIT.md.
 - Added a mandatory security implementation gate in docs/SECURITY-IMPLEMENTATION-GATE.md. Login and vault writes must remain disabled until key derivation, encryption, secure storage, and cross-platform vectors are complete.
-- Important correction to milestone tracking: the Web client currently has cipher/folder transport only. Password-login and refresh-token methods are not yet present in the committed source. The Android API module currently exposes identity token form submission but does not implement KDF or token lifecycle.
+- Historical correction from the initial transport milestone: Web password login and refresh-grant request serialization have since been added. Refresh-token lifecycle/persistence is still not implemented. The Android API module remains transport-only and does not implement KDF or token lifecycle.
 
 ## Web pre-login discovery milestone
 - Added `web/src/api/vaultwarden-prelogin.ts` for Vaultwarden's unauthenticated `POST /api/accounts/prelogin` route.
 - Normalizes email to lowercase/trimmed form and uses it as the legacy KDF salt.
 - Parses both PBKDF2-SHA256 and Argon2id KDF configurations.
 - Enforces Bitwarden-compatible pre-login parameter bounds and rejects unknown KDF types.
-- Added four contract tests; all nine current Web contract tests pass.
+- Added four pre-login contract tests at that milestone; the current complete Web contract suite has 20 passing tests.
 - This discovers parameters only. It does not derive keys, authenticate, unlock a vault, or permit writes.
 
 ## Bitwarden SDK crypto milestone
-- Pinned the official `@bitwarden/sdk-internal` npm package at `0.2.0-main.1245` (source revision `56c7617b23501af70221094cdee59e10b2a9d8d2`, GPL-3.0).
+- Pinned the official `@bitwarden/sdk-internal` npm package at `0.2.0-main.1241` (source revision `6238472451e4fa7b5c592b4b24a84e950a258957`, GPL-3.0).
 - Added a Web WASM initialization loader and a thin crypto provider that delegates KDF, user-key wrapping/unwrapping, and AES-256-CBC-HMAC field crypto to Bitwarden's SDK.
 - Added an identity client for password and refresh grants and a password-login orchestrator that runs pre-login first and never submits the plaintext master password.
 - The orchestrator zeroes its temporary master-key byte array after authentication.
-- All 19 Web contract tests pass using synthetic fixtures.
+- All 20 Web contract tests pass using synthetic fixtures.
 - Android audit found Bitwarden's official Kotlin UniFFI SDK. Native integration is not yet built: this device has no JDK, Rust toolchain, or Android NDK. Do not substitute Proton's crypto for Bitwarden's format.
-- Credential storage and full vault unlock remain disabled until Android and browser WASM initialization are integrated into the actual Proton app startup and cross-client vectors pass.
+- Credential storage and full vault unlock remain disabled until secure session storage, user-key/cipher decryption, Android integration, and cross-client vectors pass.
 
 - Added shared synthetic crypto vectors in shared/test-vectors/bitwarden-crypto-v1.json; Web verifies fixed KDF/authentication outputs and decrypts a fixed AES-256-CBC-HMAC fixture.
-- Aligned the Web SDK package to 0.2.0-main.1245, whose embedded source revision is 56c7617b23501af70221094cdee59e10b2a9d8d2. This matches the successful Bitwarden Android SDK build workflow run 10369 source revision.
+- Aligned the Web SDK package to 0.2.0-main.1241, whose embedded source revision is 6238472451e4fa7b5c592b4b24a84e950a258957. This matches the successful Bitwarden Android SDK build workflow run 43405701364 source revision.
 - Full Web contract suite now passes 20/20.
 
 ## Proton Web integration audit
@@ -87,4 +88,15 @@ The imported Proton Web API factory calls Proton shared API configuration and pr
 - Confirmed the Proton login is based on Proton account/fork/session flows; the current Lobby does not expose a local email/master-password form.
 - Confirmed the Proton crypto worker requires Proton user/address/group/share keys and cannot decrypt Bitwarden ciphers.
 - Documented the replacement boundaries and acceptance gates in docs/WEB-INTEGRATION-AUDIT.md.
-- No upstream Proton UI source files were changed during this audit.
+- No upstream Proton UI source files were changed during the initial audit; the later Web milestone adds only an isolated App.tsx bootstrap branch and a separate EagleVault login component.
+
+- Added an isolated Proton Web app mode at `?eaglevault=1`. It bypasses Proton AuthService startup, Proton crypto worker/API exposure, connectivity initialization and Sentry setup, then renders a dedicated EagleVault login page.
+- The login page initializes Bitwarden WASM, authenticates against the user-entered Vaultwarden URL, then verifies access by fetching sync and folders. It shows counts only; it does not claim vault decryption is complete.
+- Browser tokens remain memory-only and are discarded on reload/sign-out. No real credentials have been used.
+- Proton Pass Web TypeScript check and production build now pass. The isolated EagleVault branch is bundled; no live Vaultwarden credentials have been tested. The full lint command could not be verified because oxlint panicked in this environment.
+
+- 2026-11-19 Web build milestone: `?eaglevault=1` selects the EagleVault login view within the Proton app shell while bypassing Proton account/session, Redux store/sagas, PassCrypto exposure, Proton API exposure, telemetry bootstrap and connectivity startup.
+- Added `@bitwarden/sdk-internal@0.2.0-main.1241` to the Proton Pass workspace and pnpm lockfile. This version meets the repository's minimum-release-age rule and matches successful Android SDK workflow run 43405701364.
+- Proton Pass Web `check:types` passed; `build:web` passed and emitted the login bundle. The built bundle was checked for the EagleVault login copy and device identifier key.
+- Login is a dedicated EagleVault panel inside the Proton shell (exact Proton form-component reskin remains future work). It performs KDF prelogin, identity password grant, then initial sync and folder requests. The access token remains only in component memory; refresh-token persistence and vault decryption are not implemented.
+- Corrected identity endpoint to `/identity/connect/token` (not `/api/identity/connect/token`).

@@ -62,7 +62,7 @@ A mapper is required between Bitwarden cipher DTOs and the Proton UI's item view
 ## Acceptance gates
 
 - The local login view must never call Proton account endpoints.
-- Browser startup must initialize the pinned Bitwarden SDK WASM exactly once.
+- The pinned Bitwarden SDK WASM must be initialized exactly once before the first crypto operation.
 - Login must use the server's KDF settings and send only the derived authentication hash to the identity endpoint.
 - Access and refresh tokens must be stored using an explicitly reviewed secure-storage design; do not put them in localStorage.
 - Sync must decrypt with Bitwarden SDK crypto and map to UI view models without losing supported fields.
@@ -71,4 +71,20 @@ A mapper is required between Bitwarden cipher DTOs and the Proton UI's item view
 
 ## Current status
 
-The transport, pre-login, identity, and Bitwarden crypto layers exist and have 20 passing synthetic contract tests. They are not yet wired into App.tsx, LobbyContent, PrivateApp, the Redux store, or the Proton worker. The imported upstream source remains unchanged by this audit. Do not use the current UI integration as a real password vault until all acceptance gates pass.
+The transport, pre-login, identity, and Bitwarden crypto layers have 20 passing synthetic contract tests. The isolated EagleVault branch is now wired into App.tsx; it deliberately does not mount LobbyContent, PrivateApp, the Proton Redux store, or the Proton Pass crypto worker. The upstream Proton UI source is modified only at the application bootstrap boundary. Do not use the current UI integration as a real password vault until all acceptance gates pass.
+
+## EagleVault Web login integration (current milestone)
+
+The imported Proton Web application now has an explicit isolated mode:
+
+- Open the built Web app with the query parameter `?eaglevault=1`.
+- In this mode, App.tsx selects `applications/pass/src/app/EagleVault/EagleVaultApp.tsx` inside the Proton app shell, while the standard Proton account/store subtree is not mounted.
+- The standard Proton Pass AuthService/AuthStore/Redux StoreProvider tree, PassExtensionLink, ConnectivityProvider, and Proton SSO/session-resume path are skipped; the Proton AuthStore is not created, and the Proton Redux store and web sagas do not start.
+- Proton Pass crypto worker exposure, API exposure, connectivity initialization, Sentry initialization, domain-image API requests, and Proton telemetry/B2B callbacks are skipped or no-op in this mode. The outer Proton app shell and PassCore provider remain mounted; EagleVault's login panel owns its own theme styling.
+- The login form initializes the official Bitwarden SDK WASM, performs pre-login/KDF derivation and the password token grant, then calls Vaultwarden `/api/sync` and `/api/folders`.
+- Identity requests identify as Bitwarden Web (`client_id=web`) and use device type 14 (UnknownBrowser); the device identifier is a random UUID stored in localStorage. It is not a credential.
+- Access and refresh tokens are not persisted. The access token remains in component memory only for the current page lifetime.
+
+The login panel is currently a dedicated EagleVault component styled to fit the Proton app shell; it does not yet reuse Proton's exact form components or private-vault item UI. This is an authentication-and-sync connectivity milestone, not a finished vault. It intentionally displays encrypted item and folder counts only. It does not yet decrypt the account's protected user key, decrypt ciphers, refresh tokens, persist a session, or map items into Proton's private-vault UI. Do not enter production credentials until those stages and a disposable-server end-to-end test have passed.
+
+Verification on EC2AMAZ-RM1TCO7: `corepack pnpm --config.verify-deps-before-run=false --filter proton-pass check:types` passed, and `corepack pnpm --config.verify-deps-before-run=false --filter proton-pass build:web` completed successfully. The build emitted two warnings; the generated bundle contains the EagleVault login component and the stable device-id key. Dependency bootstrap required a filtered install with the public npm registry for `@protontech` packages because the clone's private GitLab package registry was unreachable from this environment. No live Vaultwarden login was attempted.

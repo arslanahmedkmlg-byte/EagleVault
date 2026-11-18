@@ -70,18 +70,22 @@ import type { ServiceWorkerClient } from './ServiceWorker/client/client';
 import { StoreProvider } from './Store/StoreProvider';
 import { store } from './Store/store';
 import locales from './locales';
+import { EagleVaultApp } from './EagleVault/EagleVaultApp';
 
-if (ENV === 'development') QA_SERVICE?.init(localStorage);
+const EAGLEVAULT_MODE = new URLSearchParams(window.location.search).get('eaglevault') === '1';
+
+if (ENV === 'development' && !EAGLEVAULT_MODE) QA_SERVICE?.init(localStorage);
 
 const api = createApi({ config, threshold: API_CONCURRENCY_TRESHOLD });
-const authStore = exposeAuthStore(createAuthStore(createSecureSessionStorage()));
+const authStore = EAGLEVAULT_MODE ? undefined : exposeAuthStore(createAuthStore(createSecureSessionStorage()));
 const connectivity = createConnectivityService({ api });
 
-exposePassCrypto(createPassCrypto(core, store));
-exposeApi(api);
-
-sentry({ config: PASS_CONFIG });
-connectivity.init();
+if (!EAGLEVAULT_MODE) {
+    exposePassCrypto(createPassCrypto(core, store));
+    exposeApi(api);
+    sentry({ config: PASS_CONFIG });
+    connectivity.init();
+}
 
 /** WebAuthn reports a dismissed or timed out prompt as `NotAllowedError` */
 const declineDismissedPrompt = (err: unknown): never => {
@@ -115,6 +119,7 @@ const getPassCoreProps = (sw: Maybe<ServiceWorkerClient>): PassCoreProviderProps
          * domain images. When service worker is enabled, utilize abort message passing to
          * correctly abort intercepted fetch requests. */
         getDomainImage: async (domain, signal) => {
+            if (EAGLEVAULT_MODE) return undefined;
             const url = `core/v4/images/logo?Domain=${domain}&Size=32&Mode=light&MaxScaleUpFactor=4`;
             const cachedImage = cache.get(url);
             if (cachedImage) return cachedImage;
@@ -135,8 +140,8 @@ const getPassCoreProps = (sw: Maybe<ServiceWorkerClient>): PassCoreProviderProps
         getLogs: logStore.read,
 
         onLink: (url, options) => window.open(url, options?.replace ? '_self' : '_blank'),
-        onTelemetry: pipe(createTelemetryEvent, telemetry.push),
-        onB2BEvent: B2BEvents.push,
+        onTelemetry: EAGLEVAULT_MODE ? noop : pipe(createTelemetryEvent, telemetry.push),
+        onB2BEvent: EAGLEVAULT_MODE ? async () => false : B2BEvents.push,
 
         openSettings: (page) =>
             history.push({
@@ -166,6 +171,7 @@ const getPassCoreProps = (sw: Maybe<ServiceWorkerClient>): PassCoreProviderProps
         },
 
         generateBiometricsKey: async () => {
+            if (!authStore) throw new Error('Proton biometrics are unavailable in EagleVault mode');
             const credential = await generateCredential(authStore);
             const key = await deriveKeyFromPRFCredential(credential);
 
@@ -190,34 +196,42 @@ export const App = () => (
                         >
                             <NotificationsProvider>
                                 <ModalsProvider>
-                                    <PassExtensionLink>
-                                        <ConnectivityProvider service={connectivity}>
-                                            <Router history={history}>
-                                                <NavigationProvider>
-                                                    <AuthStoreProvider store={authStore}>
-                                                        <AuthSwitchProvider>
-                                                            <AuthServiceProvider connectivity={connectivity}>
-                                                                <StoreProvider>
-                                                                    <ContextMenuProvider>
-                                                                        <ThemeConnect />
-                                                                        <Localized>
-                                                                            <ClipboardProvider>
-                                                                                <AppGuard />
-                                                                            </ClipboardProvider>
-                                                                        </Localized>
-                                                                        <Portal>
-                                                                            <ModalsChildren />
-                                                                            <NotificationsChildren />
-                                                                        </Portal>
-                                                                    </ContextMenuProvider>
-                                                                </StoreProvider>
-                                                            </AuthServiceProvider>
-                                                        </AuthSwitchProvider>
-                                                    </AuthStoreProvider>
-                                                </NavigationProvider>
-                                            </Router>
-                                        </ConnectivityProvider>
-                                    </PassExtensionLink>
+                                    {EAGLEVAULT_MODE ? (
+                                        <Router history={history}>
+                                            <NavigationProvider>
+                                                <EagleVaultApp />
+                                            </NavigationProvider>
+                                        </Router>
+                                    ) : (
+                                        <PassExtensionLink>
+                                            <ConnectivityProvider service={connectivity}>
+                                                <Router history={history}>
+                                                    <NavigationProvider>
+                                                        <AuthStoreProvider store={authStore!}>
+                                                            <AuthSwitchProvider>
+                                                                <AuthServiceProvider connectivity={connectivity}>
+                                                                    <StoreProvider>
+                                                                        <ContextMenuProvider>
+                                                                            <ThemeConnect />
+                                                                            <Localized>
+                                                                                <ClipboardProvider>
+                                                                                    <AppGuard />
+                                                                                </ClipboardProvider>
+                                                                            </Localized>
+                                                                            <Portal>
+                                                                                <ModalsChildren />
+                                                                                <NotificationsChildren />
+                                                                            </Portal>
+                                                                        </ContextMenuProvider>
+                                                                    </StoreProvider>
+                                                                </AuthServiceProvider>
+                                                            </AuthSwitchProvider>
+                                                        </AuthStoreProvider>
+                                                    </NavigationProvider>
+                                                </Router>
+                                            </ConnectivityProvider>
+                                        </PassExtensionLink>
+                                    )}
                                 </ModalsProvider>
                             </NotificationsProvider>
                         </ErrorBoundary>

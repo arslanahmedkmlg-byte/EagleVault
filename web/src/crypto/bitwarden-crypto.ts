@@ -58,9 +58,13 @@ export class BitwardenCryptoProvider {
     if (masterKey.byteLength !== 32) {
       throw new Error("The Bitwarden master key must be exactly 32 bytes.");
     }
+    // Copy the SDK-owned Uint8Array into a fresh ArrayBuffer-backed view.
+    // TS 6's DOM BufferSource types correctly reject ArrayBufferLike/SharedArrayBuffer.
+    const rawMasterKey = new Uint8Array(masterKey.byteLength);
+    rawMasterKey.set(masterKey);
     const key = await crypto.subtle.importKey(
       "raw",
-      masterKey,
+      rawMasterKey.buffer,
       "PBKDF2",
       false,
       ["deriveBits"],
