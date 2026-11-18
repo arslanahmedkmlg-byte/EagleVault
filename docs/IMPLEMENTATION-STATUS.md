@@ -56,3 +56,7 @@ Last updated: 2026-11-19
 
 ## Source audit conclusion
 The imported Proton Web API factory calls Proton shared API configuration and protonFetch; the Proton crypto manager is hydrated with Proton user/address keys and share managers; Proton sync dispatches through Proton legacy or user-event sync strategies. These are architectural dependencies, not just branding or endpoint URLs. The Vaultwarden adapter must replace the API/auth/data/crypto/sync boundaries, while retaining UI only where its domain model can be safely mapped.
+
+- 2026-11-19 crypto/auth audit: documented Bitwarden KDF and legacy authentication-hash requirements in docs/CRYPTO-AUTH-AUDIT.md.
+- Added a mandatory security implementation gate in docs/SECURITY-IMPLEMENTATION-GATE.md. Login and vault writes must remain disabled until key derivation, encryption, secure storage, and cross-platform vectors are complete.
+- Important correction to milestone tracking: the Web client currently has cipher/folder transport only. Password-login and refresh-token methods are not yet present in the committed source. The Android API module currently exposes identity token form submission but does not implement KDF or token lifecycle.
