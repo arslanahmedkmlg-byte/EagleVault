@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { pbkdf2Sync } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { BitwardenCryptoProvider } from "../../web/src/crypto/bitwarden-crypto.ts";
 
 const crypto = new BitwardenCryptoProvider();
@@ -72,4 +73,23 @@ test("rejects invalid KDF parameters even when called outside pre-login parsing"
     }),
     /outside the accepted pre-login range/,
   );
+});
+
+test("matches the shared Bitwarden crypto test vectors", async () => {
+  const vectors = JSON.parse(readFileSync(
+    new URL("../../shared/test-vectors/bitwarden-crypto-v1.json", import.meta.url),
+    "utf8",
+  ));
+  const fixture = vectors.masterPasswordKdf;
+  const master = crypto.deriveMasterKey(fixture.masterPassword, fixture.email, fixture.kdf);
+  assert.equal(Buffer.from(master).toString("base64"), fixture.expectedMasterKeyBase64);
+  assert.equal(
+    await crypto.deriveMasterPasswordAuthenticationHash(fixture.masterPassword, master),
+    fixture.expectedAuthenticationHashBase64,
+  );
+
+  const symmetric = vectors.symmetricEncryption;
+  const key = new Uint8Array(Buffer.from(symmetric.userKeyBase64, "base64"));
+  assert.equal(key.byteLength, 64);
+  assert.equal(crypto.decryptString(symmetric.encrypted, key), symmetric.plaintext);
 });

@@ -1,0 +1,24 @@
+{
+  "fixtureWarning": "Synthetic test-only values. Never use these credentials or keys for a real account.",
+  "sdk": {
+    "package": "@bitwarden/sdk-internal",
+    "version": "0.2.0-main.1245",
+    "sourceRevision": "56c7617b23501af70221094cdee59e10b2a9d8d2",
+    "license": "GPL-3.0"
+  },
+  "masterPasswordKdf": {
+    "email": "user@example.test",
+    "masterPassword": "EagleVault synthetic test password - not a real credential",
+    "kdf": {
+      "type": "pbkdf2-sha256",
+      "iterations": 5000
+    },
+    "expectedMasterKeyBase64": "OdNn0PGy/rE/oUQwF1LSpSqZ/MKMJexfhcavgMd+BR8=",
+    "expectedAuthenticationHashBase64": "wSixvcUm87HMaUUcBOwhxE3jsdk2EFGTxwOLa6KoJmw="
+  },
+  "symmetricEncryption": {
+    "userKeyBase64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw==",
+    "plaintext": "EagleVault cross-platform crypto fixture",
+    "encrypted": "2.C1yV6M8KKsq+zTvGAwD7FQ==|2xabZmthBWKiFJyFzCrnIhIdGAuYi1JupDjejufkECBMZM8oWFwouiUEfXVIGJaG|9iFY5AgSx7gyYsTKJBsmpvW5Z/hL/WBowNAU2yG9hGw="
+  }
+}

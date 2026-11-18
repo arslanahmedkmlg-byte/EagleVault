@@ -5,13 +5,13 @@
 EagleVault Web uses the official Bitwarden SDK crypto implementation rather than a reimplementation:
 
 - npm package: `@bitwarden/sdk-internal`
-- pinned version: `0.2.0-main.1244`
-- SDK source revision embedded in the package: `8da8618f9cbefbfdd26c0a300b0743081afa232f`
+- pinned version: `0.2.0-main.1245`
+- SDK source revision embedded in the package: `56c7617b23501af70221094cdee59e10b2a9d8d2`
 - package license: GPL-3.0
 - source: https://github.com/bitwarden/sdk-internal
 - package is explicitly described by Bitwarden as internal-use and unsupported; pin it and validate upgrades before adopting them.
 
-The package is WASM-backed in browsers. The application must call `initializeBitwardenCryptoSdk()` once during startup before invoking `BitwardenCryptoProvider`. The loader mirrors the official Bitwarden Web client pattern: load the WASM build, call SDK `init`, then `init_sdk`.
+The package is WASM-backed in browsers. The package revision was aligned to the matching successful Android SDK build commit (Bitwarden SDK Android workflow run 10369, commit 56c7617). The application must call `initializeBitwardenCryptoSdk()` once during startup before invoking `BitwardenCryptoProvider`. The loader mirrors the official Bitwarden Web client pattern: load the WASM build, call SDK `init`, then `init_sdk`.
 
 ## Implemented Web crypto operations
 
@@ -32,6 +32,10 @@ The identity client keeps unauthenticated token requests separate from the beare
 The same official SDK repository provides Kotlin UniFFI bindings in `crates/bitwarden-uniffi/kotlin/sdk`. Its Android SDK is built from Rust with Android cross-compilation (four Android ABIs) and generated Kotlin bindings. This is the correct shared crypto implementation to use on Android; do not port the Web algorithms into Kotlin separately.
 
 The development device currently has no JDK, Rust toolchain, or Android NDK installed. Therefore the Android native SDK has been source-audited but not built or integrated. The existing Android API adapter remains transport-only. The next Android milestone is to provision the documented toolchain or consume a verified, commit-matched official Android SDK artifact, then wire its Kotlin crypto client behind EagleVault's crypto interface.
+
+## Shared cross-platform vectors
+
+The file `shared/test-vectors/bitwarden-crypto-v1.json` contains synthetic PBKDF2 master-key and authentication-hash outputs plus an AES-256-CBC-HMAC encrypted field fixture. The Web tests consume these fixed values. Android must consume the same file; do not create platform-specific expected values.
 
 ## Verification performed
 
