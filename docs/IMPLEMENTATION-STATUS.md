@@ -26,3 +26,12 @@ Last updated: 2026-11-19
 5. Implement Android equivalents against the same contracts.
 6. Add crypto only after official golden vectors are available.
 7. Bring in Proton UI source selectively with original attribution and build dependencies.
+
+## Web transport milestone
+- Added a small authenticated Vaultwarden REST client for sync, cipher CRUD and folder CRUD.
+- Server URL is configurable and HTTPS is enforced except localhost development.
+- Redirects are rejected and browser credentials are not implicitly included.
+- Added Node built-in tests for URL validation, bearer headers, sync URL, cipher POST, typed errors and encoded delete IDs.
+- Test command: node --experimental-strip-types --test tests/contracts/vaultwarden-client.test.mjs
+- Result at this milestone: 5 passed, 0 failed.
+- This is a transport layer only. Token acquisition/refresh, crypto, DTO mapping, UI wiring and Android implementation remain outstanding.
