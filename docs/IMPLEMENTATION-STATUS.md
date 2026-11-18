@@ -105,3 +105,11 @@ The imported Proton Web API factory calls Proton shared API configuration and pr
 - Added a personal-vault cipher decryptor for per-cipher keys, names, notes, login credentials/TOTP/URIs, custom fields, card, identity, SSH key, bank account, driver license, passport, and password history. Organization ciphers are explicitly skipped because organization-key support is not implemented.
 - EagleVault Web now lists decrypted personal items, shows usernames/URIs, and keeps passwords masked until an item is selected and the user presses Reveal. Decrypted objects and user key are cleared on sign-out.
 - Added fixed shared encrypted user-key and item-key/cipher vectors. All 20 Web contract tests pass, including user-key unlock and nested cipher-field decryption.
+
+## Android transport implementation milestone — 2026-11-19
+- Added concrete Retrofit service methods for Vaultwarden sync, cipher create/update/delete, and folder list/create/update/delete.
+- Added an isolated API factory with HTTPS enforcement except loopback development, URL credential/query/fragment rejection, explicit timeouts, and redirect refusal.
+- Authorization remains a caller-supplied header; the transport does not reuse Proton account or API infrastructure.
+- Added unit tests for URL policy and loopback development acceptance.
+- Web contract suite remains green: 20/20 tests.
+- Android compilation is still unverified: the connected build device has no Java/JDK or Android SDK toolchain available. The official Bitwarden Kotlin UniFFI crypto SDK, login, encrypted session lifecycle, and UI integration remain the next Android milestones. Do not use real vault credentials until these gates are complete.

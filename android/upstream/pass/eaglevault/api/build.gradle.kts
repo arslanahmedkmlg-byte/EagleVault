@@ -15,4 +15,5 @@ android {
 dependencies {
     api(libs.retrofit)
     api(libs.okhttp)
+    testImplementation(libs.junit)
 }

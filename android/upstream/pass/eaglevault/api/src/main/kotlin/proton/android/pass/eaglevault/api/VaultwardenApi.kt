@@ -1,6 +1,6 @@
 /*
- * SPDX-License-Identifier: AGPL-3.0-only
- * Copyright (C) 2026 EagleVault contributors
+ * EagleVault Android adapter.
+ * This transport is intentionally independent of Proton authentication and API clients.
  */
 package proton.android.pass.eaglevault.api
 
@@ -16,58 +16,57 @@ import retrofit2.http.PUT
 import retrofit2.http.Path
 
 /**
- * Thin wire interface for the Vaultwarden-compatible API.
+ * Raw encrypted Bitwarden-compatible API surface.
  *
- * The caller supplies a current bearer token and already-encrypted JSON body.
- * This module deliberately does not implement login, token refresh, JSON
- * serialization, cipher crypto, persistence, or Proton Core networking.
+ * The caller owns authentication and must pass the access token explicitly.
+ * Cipher payloads remain opaque here; decryption belongs to the Bitwarden SDK layer.
  */
 interface VaultwardenApi {
-    @GET("sync")
+    @GET("api/sync")
     suspend fun sync(
-        @Header("Authorization") authorization: String
+        @Header("Authorization") authorization: String,
     ): Response<ResponseBody>
 
-    @POST("ciphers")
+    @POST("api/ciphers")
     suspend fun createCipher(
         @Header("Authorization") authorization: String,
-        @Body encryptedCipher: RequestBody
+        @Body encryptedCipher: RequestBody,
     ): Response<ResponseBody>
 
-    @PUT("ciphers/{id}")
+    @PUT("api/ciphers/{id}")
     suspend fun updateCipher(
         @Header("Authorization") authorization: String,
         @Path("id") cipherId: String,
-        @Body encryptedCipher: RequestBody
+        @Body encryptedCipher: RequestBody,
     ): Response<ResponseBody>
 
-    @DELETE("ciphers/{id}")
+    @DELETE("api/ciphers/{id}")
     suspend fun deleteCipher(
         @Header("Authorization") authorization: String,
-        @Path("id") cipherId: String
+        @Path("id") cipherId: String,
     ): Response<ResponseBody>
 
-    @GET("folders")
-    suspend fun listFolders(
-        @Header("Authorization") authorization: String
+    @GET("api/folders")
+    suspend fun folders(
+        @Header("Authorization") authorization: String,
     ): Response<ResponseBody>
 
-    @POST("folders")
+    @POST("api/folders")
     suspend fun createFolder(
         @Header("Authorization") authorization: String,
-        @Body encryptedFolder: RequestBody
+        @Body encryptedFolder: RequestBody,
     ): Response<ResponseBody>
 
-    @PUT("folders/{id}")
+    @PUT("api/folders/{id}")
     suspend fun updateFolder(
         @Header("Authorization") authorization: String,
         @Path("id") folderId: String,
-        @Body encryptedFolder: RequestBody
+        @Body encryptedFolder: RequestBody,
     ): Response<ResponseBody>
 
-    @DELETE("folders/{id}")
+    @DELETE("api/folders/{id}")
     suspend fun deleteFolder(
         @Header("Authorization") authorization: String,
-        @Path("id") folderId: String
+        @Path("id") folderId: String,
     ): Response<ResponseBody>
 }
