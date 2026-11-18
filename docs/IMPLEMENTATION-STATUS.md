@@ -68,3 +68,12 @@ The imported Proton Web API factory calls Proton shared API configuration and pr
 - Enforces Bitwarden-compatible pre-login parameter bounds and rejects unknown KDF types.
 - Added four contract tests; all nine current Web contract tests pass.
 - This discovers parameters only. It does not derive keys, authenticate, unlock a vault, or permit writes.
+
+## Bitwarden SDK crypto milestone
+- Pinned the official `@bitwarden/sdk-internal` npm package at `0.2.0-main.1244` (source revision `8da8618f9cbefbfdd26c0a300b0743081afa232f`, GPL-3.0).
+- Added a Web WASM initialization loader and a thin crypto provider that delegates KDF, user-key wrapping/unwrapping, and AES-256-CBC-HMAC field crypto to Bitwarden's SDK.
+- Added an identity client for password and refresh grants and a password-login orchestrator that runs pre-login first and never submits the plaintext master password.
+- The orchestrator zeroes its temporary master-key byte array after authentication.
+- All 19 Web contract tests pass using synthetic fixtures.
+- Android audit found Bitwarden's official Kotlin UniFFI SDK. Native integration is not yet built: this device has no JDK, Rust toolchain, or Android NDK. Do not substitute Proton's crypto for Bitwarden's format.
+- Credential storage and full vault unlock remain disabled until Android and browser WASM initialization are integrated into the actual Proton app startup and cross-client vectors pass.

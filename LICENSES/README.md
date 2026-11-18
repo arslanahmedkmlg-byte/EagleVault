@@ -9,6 +9,7 @@ The repository-root LICENSE is AGPL-3.0 for EagleVault project-level integration
 | Proton Pass common | GPL-3.0 | upstream/PROTON-COMMON-GPL-3.0.txt |
 | Vaultwarden | AGPL-3.0 | upstream/VAULTWARDEN-AGPL-3.0.txt |
 | Bitwarden clients | GPL-3.0 default license | upstream/BITWARDEN-CLIENTS-GPL-3.0.txt |
+| Bitwarden SDK internal package | GPL-3.0 | upstream/BITWARDEN-SDK-INTERNAL-GPL-3.0.txt |
 | Bitwarden commercial modules | Separate Bitwarden license agreement | upstream/BITWARDEN-COMMERCIAL-MODULES-RESTRICTIONS.txt |
 
 Do not copy code from the Bitwarden commercial modules directory. Check per-file headers and third-party dependency licenses before importing source. Retain upstream copyright notices. This manifest is an engineering aid, not legal advice.

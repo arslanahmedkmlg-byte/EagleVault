@@ -1,0 +1,78 @@
+export interface IdentityTokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type: string;
+  scope?: string;
+}
+
+export interface PasswordGrant {
+  username: string;
+  authenticationHash: string;
+  clientId: string;
+  deviceIdentifier: string;
+  deviceName: string;
+  deviceType: string;
+  twoFactorToken?: string;
+  twoFactorProvider?: number;
+  twoFactorRemember?: boolean;
+}
+
+/** Unauthenticated OAuth-style identity requests, isolated from vault API tokens. */
+export class VaultwardenIdentityClient {
+  private readonly endpoint: string;
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(serverUrl: string, fetchImpl: typeof fetch = fetch) {
+    const base = new URL(serverUrl);
+    if (base.protocol !== "https:" && base.hostname !== "localhost" && base.hostname !== "127.0.0.1") {
+      throw new Error("Vaultwarden server URL must use HTTPS.");
+    }
+    this.endpoint = base.toString().replace(/\/$/, "") + "/api/identity/connect/token";
+    this.fetchImpl = fetchImpl;
+  }
+
+  async passwordGrant(input: PasswordGrant): Promise<IdentityTokenResponse> {
+    const form = new URLSearchParams({
+      grant_type: "password",
+      username: input.username.trim().toLowerCase(),
+      password: input.authenticationHash,
+      client_id: input.clientId,
+      scope: "api offline_access",
+      device_identifier: input.deviceIdentifier,
+      device_name: input.deviceName,
+      device_type: input.deviceType,
+    });
+    if (input.twoFactorToken) form.set("two_factor_token", input.twoFactorToken);
+    if (input.twoFactorProvider !== undefined) form.set("two_factor_provider", String(input.twoFactorProvider));
+    if (input.twoFactorRemember !== undefined) form.set("two_factor_remember", input.twoFactorRemember ? "1" : "0");
+
+    return this.send(form);
+  }
+
+  async refreshGrant(refreshToken: string, clientId: string): Promise<IdentityTokenResponse> {
+    return this.send(new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: clientId,
+    }));
+  }
+
+  private async send(form: URLSearchParams): Promise<IdentityTokenResponse> {
+    const response = await this.fetchImpl(this.endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body: form.toString(),
+      credentials: "omit",
+      redirect: "error",
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error("Vaultwarden identity request failed with HTTP " + response.status + ": " + body);
+    }
+    return await response.json() as IdentityTokenResponse;
+  }
+}

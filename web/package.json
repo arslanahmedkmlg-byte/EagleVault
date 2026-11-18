@@ -1,0 +1,8 @@
+{
+  "name": "@eaglevault/web-adapter",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@bitwarden/sdk-internal": "0.2.0-main.1244"
+  }
+}
