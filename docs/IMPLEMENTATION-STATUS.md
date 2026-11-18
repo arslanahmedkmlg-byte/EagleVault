@@ -60,3 +60,11 @@ The imported Proton Web API factory calls Proton shared API configuration and pr
 - 2026-11-19 crypto/auth audit: documented Bitwarden KDF and legacy authentication-hash requirements in docs/CRYPTO-AUTH-AUDIT.md.
 - Added a mandatory security implementation gate in docs/SECURITY-IMPLEMENTATION-GATE.md. Login and vault writes must remain disabled until key derivation, encryption, secure storage, and cross-platform vectors are complete.
 - Important correction to milestone tracking: the Web client currently has cipher/folder transport only. Password-login and refresh-token methods are not yet present in the committed source. The Android API module currently exposes identity token form submission but does not implement KDF or token lifecycle.
+
+## Web pre-login discovery milestone
+- Added `web/src/api/vaultwarden-prelogin.ts` for Vaultwarden's unauthenticated `POST /api/accounts/prelogin` route.
+- Normalizes email to lowercase/trimmed form and uses it as the legacy KDF salt.
+- Parses both PBKDF2-SHA256 and Argon2id KDF configurations.
+- Enforces Bitwarden-compatible pre-login parameter bounds and rejects unknown KDF types.
+- Added four contract tests; all nine current Web contract tests pass.
+- This discovers parameters only. It does not derive keys, authenticate, unlock a vault, or permit writes.
