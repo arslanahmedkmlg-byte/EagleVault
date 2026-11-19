@@ -1,0 +1,12 @@
+name = "eaglevault-core"
+main = "src/index.mjs"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "VAULTS"
+class_name = "VaultStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VaultStore"]
