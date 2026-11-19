@@ -1,0 +1,14 @@
+steps:
+  - name: test
+    image: mingc/android-build-box:latest
+    commands:
+      - cd android/upstream
+      - ./gradlew :pass:eaglevault:api:test
+
+  - name: build
+    image: mingc/android-build-box:latest
+    commands:
+      - cd android/upstream
+      - ./gradlew :app:assembleDevDebug -PapkBuild=true -PdisableSentryUpload=true
+    when:
+      branch: main
