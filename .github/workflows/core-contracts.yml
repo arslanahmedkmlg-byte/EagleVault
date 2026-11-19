@@ -1,0 +1,24 @@
+name: EagleVault Core contracts
+on:
+  push:
+    paths:
+      - 'backend/eaglevault-core/**'
+      - 'shared/contracts/**'
+      - 'tests/contracts/**'
+      - '.github/workflows/core-contracts.yml'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify Cloudflare adapter security gates
+        run: node --test backend/eaglevault-core/test/*.test.mjs
+      - name: Verify portable web API contracts
+        run: node --experimental-strip-types --test tests/contracts/*.test.mjs
