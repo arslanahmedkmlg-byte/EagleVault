@@ -12,15 +12,28 @@ const authenticationHash = await sdk.deriveMasterPasswordAuthenticationHash(pass
 const wrappedUserKey = sdk.encryptUserKeyWithMasterPassword(key, password, email, kdf);
 assert.deepEqual(sdk.decryptUserKeyWithMasterPassword(wrappedUserKey, password, email, kdf), key);
 const token = 'a'.repeat(64);
+const stagingKey = 'synthetic-stage-key-for-workerd-integration';
 const runtime = new Miniflare({
   modules: true,
   scriptPath: fileURLToPath(new URL('../src/index.mjs', import.meta.url)),
   compatibilityDate: '2026-08-06',
-  bindings: { TEST_REGISTRATION_TOKEN: token },
-  durableObjects: { VAULTS: { className: 'VaultStore', useSQLite: true } }
+  bindings: {
+    TEST_REGISTRATION_TOKEN: token,
+    STAGING_MODE: 'true',
+    STAGING_ACCESS_KEY: stagingKey,
+  },
+  durableObjects: {
+    VAULTS: { className: 'VaultStore', useSQLite: true },
+    RATE_LIMITS: { className: 'RateLimitStore', useSQLite: true },
+  }
 });
 const request = (body, credential = token) => runtime.dispatchFetch('https://example.test/v1/accounts', {
-  method: 'POST', headers: { authorization: 'Bearer ' + credential, 'content-type': 'application/json' },
+  method: 'POST',
+  headers: {
+    authorization: 'Bearer ' + credential,
+    'content-type': 'application/json',
+    'x-eaglevault-staging-key': stagingKey,
+  },
   body: JSON.stringify(body)
 });
 try {

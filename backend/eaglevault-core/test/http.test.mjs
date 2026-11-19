@@ -32,13 +32,15 @@ test('preflight permits only expected methods and headers', async () => {
     headers: {
       origin,
       'access-control-request-method': 'POST',
-      'access-control-request-headers': 'authorization, content-type',
+      'access-control-request-headers': 'authorization, content-type, x-eaglevault-staging-key',
     },
   }), { CORS_ORIGINS: origin });
 
   assert.equal(valid.status, 204);
   assert.equal(valid.headers.get('access-control-allow-origin'), origin);
   assert.match(valid.headers.get('access-control-allow-methods') ?? '', /POST/);
+  assert.match(valid.headers.get('access-control-allow-headers') ?? '', /x-eaglevault-staging-key/i);
+  assert.equal(valid.headers.get('strict-transport-security'), 'max-age=31536000');
 
   const invalid = await core.fetch(new Request('https://api.eaglevault.eaglenet.asia/v1/vault', {
     method: 'OPTIONS',

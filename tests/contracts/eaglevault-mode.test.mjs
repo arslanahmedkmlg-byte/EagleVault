@@ -11,3 +11,7 @@ test("local preview requires the explicit EagleVault query flag", () => {
   assert.equal(isEagleVaultMode("localhost", ""), false);
   assert.equal(isEagleVaultMode("example.com", "?eaglevault=0"), false);
 });
+
+test("staging builds select EagleVault mode on their workers.dev hostname", () => {
+  assert.equal(isEagleVaultMode("eaglevault-web-staging.example.workers.dev", "", true), true);
+});

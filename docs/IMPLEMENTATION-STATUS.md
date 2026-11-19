@@ -2,7 +2,16 @@
 
 Last updated: 2026-11-19
 
-## Current milestone: local Core and Web implementation
+## Current milestone: isolated Cloudflare staging deployment
+
+**Live staging (isolated; no production DNS or production Workers changed):**
+- Web: `https://eaglevault-web-staging.arslanahmed-kmlg.workers.dev`
+- Core: `https://eaglevault-core-staging.arslanahmed-kmlg.workers.dev`
+- Both Workers use workers.dev URLs only. The Web Static Assets deployment is protected by HTTP Basic staging authentication. The Core API is protected by a staging-key header and exact-origin CORS. Registration is enabled only under those staging gates.
+- Core deployment version: `b4d34a36-73bc-4488-ac54-89546e82ab52`
+- Web deployment version: `02ed46b4-5f73-4277-8418-34e079dc09e9`
+
+**Deployed staging acceptance passed:** HTTPS, Basic-auth static assets, Core staging access key, exact CORS origin, HSTS/CSP/security headers, synthetic registration, login/unlock, encrypted create/read/edit/delete, persistence/relogin, synchronization, refresh rotation, replay rejection, logout revocation, account isolation, and plaintext request-body/export checks.
 
 The active branch is `codex/web-first`, based on the reviewed `handoff/server-core-2026-11-20` commit `4de39d80`. The local `main` branch is unchanged. Current edits are uncommitted. No Cloudflare resources, DNS records, or production deployments have been changed. Android feature work has not started.
 

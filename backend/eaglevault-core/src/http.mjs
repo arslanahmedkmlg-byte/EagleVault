@@ -1,6 +1,6 @@
 const defaultOrigins = new Set(['https://eaglevault.eaglenet.asia']);
 const methods = new Set(['GET', 'POST', 'PUT', 'DELETE']);
-const headers = new Set(['authorization', 'content-type']);
+const headers = new Set(['authorization', 'content-type', 'x-eaglevault-staging-key']);
 
 function allowedOrigins(env) {
   const configured = env?.CORS_ORIGINS;
@@ -21,6 +21,7 @@ function withSecurityHeaders(response, request, env) {
   responseHeaders.set('cache-control', 'no-store');
   responseHeaders.set('x-content-type-options', 'nosniff');
   responseHeaders.set('referrer-policy', 'no-referrer');
+  responseHeaders.set('strict-transport-security', 'max-age=31536000');
 
   const origin = request.headers.get('origin');
   if (origin === null) {
@@ -59,6 +60,7 @@ function preflight(request, env) {
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
+    'strict-transport-security': 'max-age=31536000',
   });
   vary(responseHeaders, 'Origin');
   vary(responseHeaders, 'Access-Control-Request-Method');

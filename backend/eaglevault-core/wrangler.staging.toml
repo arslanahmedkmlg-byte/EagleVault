@@ -1,0 +1,29 @@
+name = "eaglevault-core-staging"
+main = "src/index.mjs"
+compatibility_date = "2026-08-06"
+workers_dev = true
+preview_urls = false
+
+[vars]
+CORS_ORIGINS = "https://eaglevault-web-staging.arslanahmed-kmlg.workers.dev"
+REGISTRATION_ENABLED = "true"
+STAGING_MODE = "true"
+
+[observability]
+enabled = true
+
+[[durable_objects.bindings]]
+name = "VAULTS"
+class_name = "VaultStore"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITS"
+class_name = "RateLimitStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["VaultStore"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateLimitStore"]

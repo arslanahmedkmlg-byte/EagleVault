@@ -11,7 +11,10 @@ const runtime = new Miniflare({
   modules: true,
   scriptPath: fileURLToPath(new URL('../src/index.mjs', import.meta.url)),
   compatibilityDate: '2026-08-06',
-  bindings: { CORS_ORIGINS: 'https://eaglevault.eaglenet.asia' },
+  bindings: {
+    CORS_ORIGINS: 'https://eaglevault.eaglenet.asia',
+    REGISTRATION_ENABLED: 'true',
+  },
   durableObjects: {
     VAULTS: { className: 'VaultStore', useSQLite: true },
     RATE_LIMITS: { className: 'RateLimitStore', useSQLite: true },

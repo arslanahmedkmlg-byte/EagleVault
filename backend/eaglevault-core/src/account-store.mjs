@@ -1,8 +1,6 @@
 import { SqliteVault } from './sqlite-vault.mjs';
-import { base64Url, sha256Hex } from './auth.mjs';
+import { base64Url, derivePasswordVerifier, sha256Hex } from './auth.mjs';
 
-const verifierIterations = 600_000;
-const encoder = new TextEncoder();
 
 function decodeBase64(text, size) {
   if (typeof text !== 'string' || text.length !== Math.ceil(size / 3) * 4) return null;
@@ -23,14 +21,7 @@ function equalBytes(left, right) {
 }
 
 async function deriveVerifier(authenticationHash, salt) {
-  const key = await crypto.subtle.importKey('raw', authenticationHash, 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({
-    name: 'PBKDF2',
-    salt,
-    iterations: verifierIterations,
-    hash: 'SHA-256',
-  }, key, 256);
-  return new Uint8Array(bits);
+  return derivePasswordVerifier(authenticationHash, salt);
 }
 
 function jsonResponse(status, body) {

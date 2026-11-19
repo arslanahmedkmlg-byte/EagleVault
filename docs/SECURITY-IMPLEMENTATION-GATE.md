@@ -14,3 +14,15 @@ Before deploying or permitting real user data, complete and review:
 7. For Linux portability claims, implement and test a Linux SQLite adapter and export/import migration; the portable domain boundary alone is not sufficient.
 
 Synthetic local workerd and Web contract tests are useful evidence but do not constitute production security approval. No production deployment or DNS changes are authorized by this document.
+
+## Staging deployment status
+
+Isolated staging passed a synthetic deployed lifecycle on 2026-11-19:
+- Core: `https://eaglevault-core-staging.arslanahmed-kmlg.workers.dev`
+- Web: `https://eaglevault-web-staging.arslanahmed-kmlg.workers.dev`
+- Static assets require an HTTP Basic staging secret.
+- Core API requests require the matching staging-key header.
+- Registration remains disabled in the production source configuration and staging registration is enabled only behind the staging gate.
+- The suite verified encrypted create/read/edit/delete, persistence/relogin, synchronization, refresh replay rejection, logout revocation, account isolation, CORS, HTTPS, security headers, and absence of plaintext vault content in request bodies and export snapshots.
+
+This staging acceptance does not replace an independent cryptographic security review, account backup/recovery policy, Linux migration test, Android interoperability test, or production approval.

@@ -44,7 +44,11 @@ async function consumeIpLimit(request, env, action, maxRequests, windowMs) {
 }
 
 async function registerAccount(request, env) {
-  if (!await consumeIpLimit(request, env, 'register', 5, 60 * 60 * 1000)) {
+  if (env?.REGISTRATION_ENABLED !== 'true') {
+    return reply(403, { error: 'registration_disabled' });
+  }
+  const registrationLimit = env?.STAGING_MODE === 'true' ? 20 : 5;
+  if (!await consumeIpLimit(request, env, 'register', registrationLimit, 60 * 60 * 1000)) {
     return reply(429, { error: 'rate_limited' });
   }
   const body = await readBoundedJson(request, 2048);
@@ -74,6 +78,35 @@ async function registerAccount(request, env) {
       wrappedUserKey: body.wrappedUserKey,
     }),
   });
+}
+
+async function stagingKeyMatches(supplied, expected) {
+  if (typeof supplied !== 'string' || supplied.length > 256) return false;
+  const encoder = new TextEncoder();
+  const [suppliedDigest, expectedDigest] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(supplied)),
+    crypto.subtle.digest('SHA-256', encoder.encode(expected)),
+  ]);
+  const suppliedBytes = new Uint8Array(suppliedDigest);
+  const expectedBytes = new Uint8Array(expectedDigest);
+  let difference = 0;
+  for (let index = 0; index < expectedBytes.length; index++) {
+    difference |= suppliedBytes[index] ^ expectedBytes[index];
+  }
+  return difference === 0;
+}
+
+async function stagingAccessDenied(request, env) {
+  if (env?.STAGING_MODE !== 'true') return null;
+  const expected = env.STAGING_ACCESS_KEY;
+  if (typeof expected !== 'string' || expected.length < 43) {
+    return reply(503, { error: 'staging_access_not_configured' });
+  }
+  if (await stagingKeyMatches(request.headers.get('x-eaglevault-staging-key'), expected)) {
+    return null;
+  }
+  const allowed = await consumeIpLimit(request, env, 'staging-access', 10, 15 * 60 * 1000);
+  return reply(allowed ? 401 : 429, { error: allowed ? 'staging_access_required' : 'rate_limited' });
 }
 
 async function prelogin(request) {
@@ -356,48 +389,54 @@ export default {
     }
     if (url.pathname === '/health' && request.method === 'GET') {
       response = Response.json({ service: 'eaglevault-core', status: 'development', version: 1 });
-    } else if (url.pathname === '/v1/accounts' && request.method === 'POST') {
-      response = await registerSyntheticAccount(request, env);
-    } else if (url.pathname === '/v1/accounts/register' && request.method === 'POST') {
-      response = await registerAccount(request, env);
-    } else if (url.pathname === '/api/accounts/prelogin' && request.method === 'POST') {
-      response = await prelogin(request);
-    } else if (url.pathname === '/identity/connect/token' && request.method === 'POST') {
-      const contentType = request.headers.get('content-type') ?? '';
-      if (contentType.includes('application/x-www-form-urlencoded')) {
-        const text = await readBoundedText(request, 4096);
-        if (text === null) {
-          response = reply(413, { error: 'request_too_large' });
-        } else {
-          const form = new URLSearchParams(text);
-          const body = Object.fromEntries(form.entries());
-          response = body.grant_type === 'refresh_token'
-            ? await refreshGrant(new Request(request.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), env)
-            : await passwordGrant(new Request(request.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), env);
-        }
-      } else {
-        response = await reply(415, { error: 'unsupported_media_type' });
-      }
-    } else if (url.pathname === '/v1/auth/login' && request.method === 'POST') {
-      const body = await readBoundedJson(request, 2048);
-      if (!body || typeof body.email !== 'string' ||
-          typeof body.authenticationHash !== 'string') {
-        response = reply(400, { error: 'invalid_request' });
-      } else {
-        response = await passwordGrant(new Request(request.url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            username: body.email,
-            password: body.authenticationHash,
-            grant_type: 'password',
-          }),
-        }), env);
-      }
-    } else if (url.pathname === '/v1/auth/refresh' && request.method === 'POST') {
-      response = await refreshGrant(request, env);
     } else {
-      response = await vaultRequest(request, env, url);
+      const denied = await stagingAccessDenied(request, env);
+      if (denied) return corsResponse(request, env, denied);
+      if (url.pathname === '/v1/accounts' && request.method === 'POST') {
+        response = env?.STAGING_MODE === 'true'
+          ? await registerSyntheticAccount(request, env)
+          : reply(404, { error: 'not_found' });
+      } else if (url.pathname === '/v1/accounts/register' && request.method === 'POST') {
+        response = await registerAccount(request, env);
+      } else if (url.pathname === '/api/accounts/prelogin' && request.method === 'POST') {
+        response = await prelogin(request);
+      } else if (url.pathname === '/identity/connect/token' && request.method === 'POST') {
+        const contentType = request.headers.get('content-type') ?? '';
+        if (contentType.includes('application/x-www-form-urlencoded')) {
+          const text = await readBoundedText(request, 4096);
+          if (text === null) {
+            response = reply(413, { error: 'request_too_large' });
+          } else {
+            const form = new URLSearchParams(text);
+            const body = Object.fromEntries(form.entries());
+            response = body.grant_type === 'refresh_token'
+              ? await refreshGrant(new Request(request.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), env)
+              : await passwordGrant(new Request(request.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), env);
+          }
+        } else {
+          response = await reply(415, { error: 'unsupported_media_type' });
+        }
+      } else if (url.pathname === '/v1/auth/login' && request.method === 'POST') {
+        const body = await readBoundedJson(request, 2048);
+        if (!body || typeof body.email !== 'string' ||
+            typeof body.authenticationHash !== 'string') {
+          response = reply(400, { error: 'invalid_request' });
+        } else {
+          response = await passwordGrant(new Request(request.url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              username: body.email,
+              password: body.authenticationHash,
+              grant_type: 'password',
+            }),
+          }), env);
+        }
+      } else if (url.pathname === '/v1/auth/refresh' && request.method === 'POST') {
+        response = await refreshGrant(request, env);
+      } else {
+        response = await vaultRequest(request, env, url);
+      }
     }
     return corsResponse(request, env, response);
   }

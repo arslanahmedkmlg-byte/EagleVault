@@ -5,6 +5,7 @@ import { loginToEagleVault, registerEagleVaultAccount } from 'eaglevault/auth/ea
 import { BitwardenCryptoProvider } from 'eaglevault/crypto/bitwarden-crypto';
 import { initializeBitwardenCryptoSdk } from 'eaglevault/crypto/bitwarden-sdk-loader';
 
+import { isEagleVaultStaging } from './mode';
 import './EagleVaultApp.scss';
 
 type LoginItem = {
@@ -87,6 +88,7 @@ export const EagleVaultApp = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [folderName, setFolderName] = useState('');
     const [notice, setNotice] = useState('');
+    const [stagingAccessKey, setStagingAccessKey] = useState('');
 
     const clientRef = useRef<EagleVaultClient | null>(null);
     const userKeyRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
@@ -183,7 +185,7 @@ export const EagleVaultApp = () => {
         clearSession();
         try {
             await initializeBitwardenCryptoSdk();
-            const client = new EagleVaultClient();
+            const client = new EagleVaultClient(undefined, fetch, isEagleVaultStaging ? stagingAccessKey : undefined);
             const cryptoProvider = new BitwardenCryptoProvider();
             cryptoRef.current = cryptoProvider;
             const session = mode === 'register'
@@ -329,6 +331,7 @@ export const EagleVaultApp = () => {
             setError(cause instanceof Error ? cause.message : 'The server session could not be revoked.');
         } finally {
             clearSession();
+            setStagingAccessKey('');
             setBusy(false);
         }
     };
@@ -389,6 +392,7 @@ export const EagleVaultApp = () => {
                 setSelectedId(null);
                 setScreen('auth');
                 setAuthMode('login');
+                setStagingAccessKey('');
                 setNotice('Vault locked. Sign in again to unlock it.');
             }
         })();
@@ -538,6 +542,12 @@ export const EagleVaultApp = () => {
                             {authMode === 'register' ? 'Create an encrypted EagleVault account.' : 'Sign in to EagleVault Core.'}
                         </p>
                         <form onSubmit={(event) => establishSession(authMode, event)} className="eaglevault__form">
+                            {isEagleVaultStaging && (
+                                <label>Staging access code
+                                    <input type="password" required autoComplete="off" value={stagingAccessKey}
+                                        onChange={(event) => setStagingAccessKey(event.target.value)} />
+                                </label>
+                            )}
                             <label>Email address
                                 <input type="email" required autoComplete="username" value={email}
                                     onChange={(event) => setEmail(event.target.value)} />

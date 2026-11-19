@@ -1,5 +1,19 @@
+// Cloudflare Web Crypto rejects PBKDF2 iteration counts above 100,000.
+const verifierIterations = 100_000;
+
 export function normalizeEmail(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+export async function derivePasswordVerifier(authenticationHash, salt) {
+  const key = await crypto.subtle.importKey('raw', authenticationHash, 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({
+    name: 'PBKDF2',
+    salt,
+    iterations: verifierIterations,
+    hash: 'SHA-256',
+  }, key, 256);
+  return new Uint8Array(bits);
 }
 
 export async function readBoundedJson(request, limit) {

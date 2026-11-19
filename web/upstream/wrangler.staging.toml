@@ -1,0 +1,15 @@
+name = "eaglevault-web-staging"
+main = "worker.mjs"
+compatibility_date = "2026-11-19"
+workers_dev = true
+preview_urls = false
+
+[vars]
+CORE_API_ORIGIN = "https://eaglevault-core-staging.arslanahmed-kmlg.workers.dev"
+STAGING_MODE = "true"
+
+[assets]
+directory = "./applications/pass/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true

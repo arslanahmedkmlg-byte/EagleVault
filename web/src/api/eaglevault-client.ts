@@ -1,5 +1,11 @@
 import { parsePreloginKdf, type VaultKdf } from "./vaultwarden-prelogin.ts";
 
+declare const EAGLEVAULT_API_URL: string;
+
+const defaultCoreApiOrigin = typeof EAGLEVAULT_API_URL === "undefined"
+  ? "https://api.eaglevault.eaglenet.asia"
+  : EAGLEVAULT_API_URL;
+
 export type VaultRecordKind = "item" | "folder";
 
 export interface EncryptedVaultRecord {
@@ -57,11 +63,13 @@ export class EagleVaultApiError extends Error {
 export class EagleVaultClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly stagingAccessKey?: string;
   private session: SessionTokens | undefined;
 
   constructor(
-    baseUrl = "https://api.eaglevault.eaglenet.asia",
+    baseUrl = defaultCoreApiOrigin,
     fetchImpl: typeof fetch = fetch,
+    stagingAccessKey?: string,
   ) {
     const parsed = new URL(baseUrl);
     if ((parsed.protocol !== "https:" && parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") ||
@@ -70,6 +78,7 @@ export class EagleVaultClient {
     }
     this.baseUrl = parsed.origin;
     this.fetchImpl = fetchImpl;
+    this.stagingAccessKey = stagingAccessKey;
   }
 
   get origin(): string {
@@ -203,6 +212,7 @@ export class EagleVaultClient {
     }
     const headers = new Headers({ Accept: "application/json" });
     if (init.body !== undefined) headers.set("Content-Type", "application/json");
+    if (this.stagingAccessKey) headers.set("X-EagleVault-Staging-Key", this.stagingAccessKey);
     if (authenticated) {
       if (!this.session) throw new EagleVaultApiError("Sign in to continue.", 401);
       headers.set("Authorization", `Bearer ${this.session.accessToken}`);

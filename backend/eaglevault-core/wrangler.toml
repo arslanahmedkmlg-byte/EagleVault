@@ -7,6 +7,7 @@ routes = [{ pattern = "api.eaglevault.eaglenet.asia", custom_domain = true }]
 
 [vars]
 CORS_ORIGINS = "https://eaglevault.eaglenet.asia"
+REGISTRATION_ENABLED = "false"
 
 [observability]
 enabled = true

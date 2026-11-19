@@ -73,6 +73,22 @@ test("rejects insecure or credential-bearing Core origins", () => {
   assert.throws(() => new EagleVaultClient("https://api.example.test/base"), /HTTPS origin/);
 });
 
+test("sends a staging access key only as a request header", async () => {
+  const requests = [];
+  const client = new EagleVaultClient(
+    "https://eaglevault-core-staging.example.workers.dev",
+    async (url, init) => {
+      requests.push({ url: String(url), init });
+      return Response.json({ kdf: 0, kdfIterations: 600_000 });
+    },
+    "staging-key-fixture",
+  );
+  await client.discoverKdf("user@example.test");
+  assert.equal(requests[0].init.headers.get("x-eaglevault-staging-key"), "staging-key-fixture");
+  assert.equal(requests[0].url.includes("staging-key-fixture"), false);
+  assert.equal(requests[0].init.body.includes("staging-key-fixture"), false);
+});
+
 test("logout revokes the token before clearing in-memory session state", async () => {
   const requests = [];
   const client = new EagleVaultClient("https://api.example.test", async (url, init) => {

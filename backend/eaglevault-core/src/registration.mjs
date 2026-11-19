@@ -1,6 +1,5 @@
-const encoder = new TextEncoder();
+import { derivePasswordVerifier } from './auth.mjs';
 const registerPath = '/v1/accounts';
-const iterations = 600_000;
 
 function reply(status, body) {
   return Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -78,20 +77,22 @@ export async function registerSyntheticAccount(request, env) {
 
   try {
     const salt = crypto.getRandomValues(new Uint8Array(32));
-    const material = await crypto.subtle.importKey('raw', hash, 'PBKDF2', false, ['deriveBits']);
-    const verifier = await crypto.subtle.deriveBits({
-      name: 'PBKDF2', salt, iterations, hash: 'SHA-256'
-    }, material, 256);
-    const vault = env.VAULTS.get(env.VAULTS.idFromName('account:' + email));
-    return await vault.fetch('https://vault.internal' + registerPath, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        salt: btoa(String.fromCharCode(...salt)),
-        verifier: btoa(String.fromCharCode(...new Uint8Array(verifier))),
-        wrappedUserKey: body.wrappedUserKey
-      })
-    });
+    const verifier = await derivePasswordVerifier(hash, salt);
+    try {
+      const vault = env.VAULTS.get(env.VAULTS.idFromName('account:' + email));
+      return await vault.fetch('https://vault.internal' + registerPath, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          salt: btoa(String.fromCharCode(...salt)),
+          verifier: btoa(String.fromCharCode(...verifier)),
+          wrappedUserKey: body.wrappedUserKey
+        })
+      });
+    } finally {
+      salt.fill(0);
+      verifier.fill(0);
+    }
   } finally {
     hash.fill(0);
   }
