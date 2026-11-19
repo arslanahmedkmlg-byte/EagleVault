@@ -1,12 +1,13 @@
+when:
+  event: push
+
 steps:
   - name: test
-    image: local
     commands:
       - cd android/upstream
       - ./gradlew :pass:eaglevault:api:test
 
   - name: build
-    image: local
     commands:
       - cd android/upstream
       - ./gradlew :app:assembleDevDebug -PapkBuild=true -PdisableSentryUpload=true
