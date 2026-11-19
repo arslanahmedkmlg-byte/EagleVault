@@ -1,1 +1,1 @@
-{"name":"@eaglevault/core","private":true,"type":"module","scripts":{"test":"node --test test/*.test.mjs"},"engines":{"node":">=20"},"devDependencies":{"miniflare":"4.20260730.0"}}
+{"name":"@eaglevault/core","private":true,"type":"module","scripts":{"test":"node --test test/*.test.mjs","test:integration":"node --experimental-strip-types integration/vault-lifecycle.mjs"},"engines":{"node":">=20"},"devDependencies":{"miniflare":"4.20260730.0"}}

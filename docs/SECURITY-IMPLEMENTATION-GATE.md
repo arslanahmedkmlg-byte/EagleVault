@@ -1,19 +1,16 @@
 
 # Security implementation gate
 
-> Historical Vaultwarden compatibility work. Current implementation targets EagleVault Core. See [implementation status](IMPLEMENTATION-STATUS.md) for the active milestones.
+See [implementation status](IMPLEMENTATION-STATUS.md) for current delivery and test results. Core/Web authentication and encrypted vault operations are implemented for local synthetic testing; they are **not approved for public production use**.
 
-EagleVault must not enable account creation, login, or vault writes until all of these are complete:
+Before deploying or permitting real user data, complete and review:
 
-1. Parse the server's pre-login KDF type and parameters. Support both PBKDF2-SHA256 and Argon2id as required by the account; reject invalid or downgraded parameters.
-2. Derive the master key with a vetted Bitwarden-compatible implementation.
-3. Derive the authentication hash using the exact Bitwarden-compatible construction; never submit the plaintext master password.
-4. Generate and wrap the user key using the expected AES-256-CBC-HMAC format.
-5. Encrypt cipher fields and cipher keys in the exact format expected by Bitwarden clients.
-6. Store access and refresh tokens using platform secure storage; never log tokens, passwords, derived keys, or decrypted vault data.
-7. Verify Web and Android against the same deterministic test vectors and a disposable Vaultwarden instance.
-8. Test login failures, 2FA, refresh rotation, KDF mismatch, corrupted ciphertext, and sync conflict handling.
+1. Independently review the Bitwarden-compatible KDF, authentication hash, key wrapping, ciphertext envelope, and SDK version. Confirm no master password or decrypted vault contents reach Core.
+2. Test wrong passwords, malformed/corrupt ciphertext, token expiry, refresh replay/revocation, account isolation, and concurrent sync conflicts against the actual Worker runtime.
+3. Review rate limits and abuse controls, registration privacy, email verification/recovery policy, error responses, logs, and secret handling.
+4. Verify backup/restore and schema migration/rollback. Current snapshot portability covers encrypted vault records only; it does not back up accounts or sessions.
+5. Complete a security and dependency/license review, document unsupported features, and approve a restricted staging deployment before any production exposure.
+6. For cross-platform release, implement Android crypto and secure storage against the same protocol and vectors, then pass the Web↔Android acceptance test.
+7. For Linux portability claims, implement and test a Linux SQLite adapter and export/import migration; the portable domain boundary alone is not sufficient.
 
-## Explicitly not implemented
-
-The current transport layer is not a password manager by itself. It does not yet implement pre-login, KDF derivation, key hierarchy, vault encryption/decryption, secure token persistence, full DTO conversion, or UI integration. Keep these features disabled until the gate above passes.
+Synthetic local workerd and Web contract tests are useful evidence but do not constitute production security approval. No production deployment or DNS changes are authorized by this document.

@@ -1,0 +1,12 @@
+name = "eaglevault-web"
+main = "worker.mjs"
+compatibility_date = "2026-11-19"
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "eaglevault.eaglenet.asia", custom_domain = true }]
+
+[assets]
+directory = "./applications/pass/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true

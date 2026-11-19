@@ -28,6 +28,7 @@
             "@proton/stylelint-config-proton/*": ["./packages/stylelint-config-proton/*"],
             "proton-pass-extension/*": ["./applications/pass-extension/src/*"],
             "proton-pass-web/*": ["./applications/pass/src/*"],
+            "eaglevault/*": ["../src/*"],
             "proton-pass-desktop/*": ["./applications/pass-desktop/src/*"],
             "proton-pass-desktop-native": ["./applications/pass-desktop/native/"],
             "proton-pass-desktop-native/*": ["./applications/pass-desktop/native/*"],

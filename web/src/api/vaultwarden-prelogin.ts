@@ -1,5 +1,5 @@
 /**
- * Vaultwarden pre-login KDF discovery.
+ * Bitwarden-compatible KDF discovery.
  *
  * The returned KDF parameters must be validated before deriving a master key.
  * The normalized account email is the legacy Bitwarden password-KDF salt;
@@ -54,6 +54,10 @@ export async function fetchVaultwardenPrelogin(
   }
 
   const data = (await response.json()) as PreloginWireResponse;
+  return parsePreloginKdf(data, normalizedEmail);
+}
+
+export function parsePreloginKdf(data: PreloginWireResponse, normalizedEmail: string): PreloginResult {
   const settings = data.kdfSettings;
   const type = settings?.kdfType ?? data.kdf;
   const iterations = settings?.iterations ?? data.kdfIterations;

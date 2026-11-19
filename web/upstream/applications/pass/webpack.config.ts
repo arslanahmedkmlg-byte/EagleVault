@@ -51,7 +51,13 @@ const result = async (opts: WebpackEnvArguments): Promise<Configuration> => {
         })
     );
 
-    if (config.resolve) config.resolve.alias = { 'proton-pass-web': path.resolve(__dirname, 'src/') };
+    if (config.resolve) {
+        config.resolve.alias = {
+            ...config.resolve.alias,
+            'proton-pass-web': path.resolve(__dirname, 'src/'),
+            eaglevault: path.resolve(__dirname, '../../../src/'),
+        };
+    }
     if (config.devServer) config.devServer.headers = { 'Service-Worker-Allowed': '/' };
 
     if (config.output) {

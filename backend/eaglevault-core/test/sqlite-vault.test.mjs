@@ -67,3 +67,63 @@ test('invalid inputs and rolled-back writes do not advance the cursor', t => {
   assert.deepEqual(vault.sync(0), { records: [], cursor: 0, hasMore: false });
   assert.deepEqual(openVault(t).vault.sync(0), vault.sync(0));
 });
+
+test('records the schema migration and round-trips encrypted snapshots across databases', t => {
+  const source = openVault(t);
+  const destination = openVault(t);
+  source.vault.write({
+    kind: 'item',
+    id: 'login-1',
+    expectedRevision: 0,
+    ciphertext: 'encrypted-login-fixture',
+  });
+  source.vault.write({
+    kind: 'folder',
+    id: 'folder-1',
+    expectedRevision: 0,
+    ciphertext: 'encrypted-folder-fixture',
+  });
+  source.vault.write({
+    kind: 'item',
+    id: 'login-1',
+    expectedRevision: 1,
+    ciphertext: null,
+  });
+
+  const snapshot = source.vault.exportSnapshot();
+  destination.vault.importSnapshot(snapshot);
+
+  assert.equal(source.db.prepare('SELECT version FROM schema_migrations').get().version, 1);
+  assert.deepEqual(destination.vault.exportSnapshot(), snapshot);
+  assert.deepEqual(destination.vault.sync(1), {
+    records: [
+      { kind: 'folder', id: 'folder-1', revision: 2, ciphertext: 'encrypted-folder-fixture' },
+      { kind: 'item', id: 'login-1', revision: 3, ciphertext: null },
+    ],
+    cursor: 3,
+    hasMore: false,
+  });
+});
+
+test('rejects invalid snapshots without changing stored data', t => {
+  const { vault } = openVault(t);
+  vault.write({
+    kind: 'item',
+    id: 'login-1',
+    expectedRevision: 0,
+    ciphertext: 'encrypted-fixture',
+  });
+  const original = vault.exportSnapshot();
+
+  assert.throws(() => vault.importSnapshot({ ...original, version: 3 }), TypeError);
+  assert.throws(() => vault.importSnapshot({
+    ...original,
+    records: [...original.records, { ...original.records[0], id: 'login-2' }],
+  }), TypeError);
+  assert.throws(() => vault.importSnapshot({
+    ...original,
+    records: [{ ...original.records[0], ciphertext: 'x'.repeat(128 * 1024 + 1) }],
+  }), TypeError);
+
+  assert.deepEqual(vault.exportSnapshot(), original);
+});

@@ -350,3 +350,209 @@
     font-size: 10px;
     font-weight: 650;
 }
+
+.eaglevault__panel--wide {
+    width: min(100%, 1120px);
+}
+
+.eaglevault__vault-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 22px;
+}
+
+.eaglevault__vault-header .eaglevault__muted {
+    margin: 6px 0 0;
+}
+
+.eaglevault__header-actions,
+.eaglevault__inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.eaglevault__header-actions button,
+.eaglevault__inline-actions > button:not(.eaglevault__button),
+.eaglevault__text-button {
+    min-height: 38px;
+    padding: 0 13px;
+    border: 1px solid var(--ev-border);
+    border-radius: 9px;
+    color: var(--ev-text);
+    background: #24252d;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+}
+
+.eaglevault__header-actions button:disabled,
+.eaglevault__inline-actions button:disabled,
+.eaglevault__text-button:disabled {
+    cursor: wait;
+    opacity: .6;
+}
+
+.eaglevault__workspace {
+    display: grid;
+    grid-template-columns: minmax(230px, .75fr) minmax(0, 1.5fr);
+    gap: 20px;
+    min-height: 420px;
+}
+
+.eaglevault__vault-list,
+.eaglevault__vault-detail {
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid var(--ev-border);
+    border-radius: 13px;
+    background: rgba(15, 17, 21, .65);
+}
+
+.eaglevault__search input,
+.eaglevault__form select,
+.eaglevault__form textarea,
+.eaglevault__folder-form input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 11px;
+    border: 1px solid var(--ev-border);
+    border-radius: 9px;
+    outline: none;
+    color: var(--ev-text);
+    background: #111318;
+    font: inherit;
+    font-size: 13px;
+}
+
+.eaglevault__form textarea {
+    resize: vertical;
+}
+
+.eaglevault__secondary-button,
+.eaglevault__folder-form button,
+.eaglevault__folder-list button {
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--ev-border);
+    border-radius: 8px;
+    color: #d3d0ff;
+    background: #242333;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.eaglevault__secondary-button {
+    width: 100%;
+    margin: 10px 0 0;
+}
+
+.eaglevault__folder-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 8px;
+    margin-top: 18px;
+}
+
+.eaglevault__folder-form label {
+    display: grid;
+    gap: 6px;
+    color: var(--ev-muted);
+    font-size: 11px;
+}
+
+.eaglevault__folder-list {
+    display: grid;
+    gap: 6px;
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.eaglevault__folder-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 0;
+    color: var(--ev-muted);
+    font-size: 12px;
+}
+
+.eaglevault__folder-list button {
+    min-height: 29px;
+    padding: 0 8px;
+    font-size: 10px;
+}
+
+.eaglevault__vault-detail {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 14px;
+}
+
+.eaglevault__vault-detail > .eaglevault__form {
+    width: min(100%, 560px);
+    margin: 0 auto;
+}
+
+.eaglevault__vault-detail .eaglevault__details-heading h2 {
+    margin: 4px 0 0;
+}
+
+.eaglevault__password-editor {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+}
+
+.eaglevault__password-editor button {
+    padding: 0 11px;
+    border: 1px solid var(--ev-border);
+    border-radius: 8px;
+    color: #d3d0ff;
+    background: #242333;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+}
+
+.eaglevault__text-button {
+    display: block;
+    margin: 16px auto 0;
+    border-color: transparent;
+    color: #d3d0ff;
+    background: transparent;
+}
+
+.eaglevault__visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+@media (max-width: 720px) {
+    .eaglevault__vault-header {
+        flex-direction: column;
+    }
+
+    .eaglevault__workspace {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .eaglevault__vault-detail {
+        min-height: 300px;
+    }
+}

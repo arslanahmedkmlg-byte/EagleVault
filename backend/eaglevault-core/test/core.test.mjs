@@ -6,9 +6,9 @@ test('health is available and explicitly development-only', async () => {
   assert.equal(response.status, 200);
   assert.equal((await response.json()).status, 'development');
 });
-test('vault writes fail closed', async () => {
+test('vault APIs require a valid authenticated session', async () => {
   const response = await core.fetch(new Request('https://api.example.test/api/ciphers', { method: 'POST' }));
-  assert.equal(response.status, 501);
+  assert.equal(response.status, 401);
 });
 test('Durable Object does not expose unauthenticated data', async () => {
   const response = await new VaultStore({}, {}).fetch();

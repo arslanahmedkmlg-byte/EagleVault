@@ -69,10 +69,11 @@ import { ServiceWorkerContext, ServiceWorkerProvider } from './ServiceWorker/cli
 import type { ServiceWorkerClient } from './ServiceWorker/client/client';
 import { StoreProvider } from './Store/StoreProvider';
 import { store } from './Store/store';
+import { isEagleVaultMode } from './EagleVault/mode';
 import locales from './locales';
 import { EagleVaultApp } from './EagleVault/EagleVaultApp';
 
-const EAGLEVAULT_MODE = new URLSearchParams(window.location.search).get('eaglevault') === '1';
+const EAGLEVAULT_MODE = isEagleVaultMode(window.location.hostname, window.location.search);
 
 if (ENV === 'development' && !EAGLEVAULT_MODE) QA_SERVICE?.init(localStorage);
 

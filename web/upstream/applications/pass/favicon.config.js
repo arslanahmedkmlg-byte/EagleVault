@@ -1,17 +1,15 @@
 const path = require('path');
 
-const url = 'https://pass.proton.me/';
+const url = 'https://eaglevault.eaglenet.asia/';
 
 module.exports = {
-    logo: path.resolve('./src/favicon.svg'),
+    logo: path.resolve('./src/eaglevault.svg'),
     // TODO provide real maskable icon
-    logoMaskable: path.resolve('./src/favicon.svg'),
+    logoMaskable: path.resolve('./src/eaglevault.svg'),
     favicons: {
-        appName: 'Proton Pass Web App',
-        appDescription:
-            'Proton Pass is an open source, end-to-end encrypted password manager app. Create and store passwords, email aliases, 2FA codes, and notes on all your devices',
+        appName: 'EagleVault',
+        appDescription: 'EagleVault is an end-to-end encrypted password manager.',
     },
     url,
-    ogImage: `${url}assets/proton-og-image.png`,
     // locales: Object.keys(require('./locales/config/locales.json')),
 };

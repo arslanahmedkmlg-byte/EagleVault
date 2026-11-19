@@ -5,6 +5,9 @@ workers_dev = false
 preview_urls = false
 routes = [{ pattern = "api.eaglevault.eaglenet.asia", custom_domain = true }]
 
+[vars]
+CORS_ORIGINS = "https://eaglevault.eaglenet.asia"
+
 [observability]
 enabled = true
 
@@ -12,6 +15,14 @@ enabled = true
 name = "VAULTS"
 class_name = "VaultStore"
 
+[[durable_objects.bindings]]
+name = "RATE_LIMITS"
+class_name = "RateLimitStore"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["VaultStore"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateLimitStore"]
