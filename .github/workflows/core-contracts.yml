@@ -20,5 +20,7 @@ jobs:
           node-version: '24'
       - name: Verify Cloudflare adapter security gates
         run: node --test backend/eaglevault-core/test/*.test.mjs
+      - name: Install web adapter crypto dependency
+        run: npm ci --prefix web --ignore-scripts --no-audit --no-fund
       - name: Verify portable web API contracts
         run: node --experimental-strip-types --test tests/contracts/*.test.mjs
