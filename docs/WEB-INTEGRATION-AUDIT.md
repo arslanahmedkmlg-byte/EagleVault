@@ -1,5 +1,7 @@
 # Proton Pass Web integration source audit
 
+> The audit below records the Vaultwarden compatibility prototype. The current Web milestone targets EagleVault Core through its portable HTTP API.
+
 Audit target: imported Proton Pass Web client under web/upstream, reviewed against EagleVault's Vaultwarden transport and Bitwarden SDK crypto adapters.
 
 ## Findings

@@ -3,6 +3,8 @@ on:
   push:
     paths:
       - 'backend/eaglevault-core/**'
+      - 'web/src/**'
+      - 'web/package*.json'
       - 'shared/contracts/**'
       - 'tests/contracts/**'
       - '.github/workflows/core-contracts.yml'
@@ -24,3 +26,7 @@ jobs:
         run: npm ci --prefix web --ignore-scripts --no-audit --no-fund
       - name: Verify portable web API contracts
         run: node --experimental-strip-types --test tests/contracts/*.test.mjs
+      - name: Install pinned Cloudflare test runtime
+        run: npm ci --prefix backend/eaglevault-core --include=dev --ignore-scripts --no-audit --no-fund
+      - name: Verify synthetic registration in workerd
+        run: node --experimental-strip-types backend/eaglevault-core/integration/registration.mjs

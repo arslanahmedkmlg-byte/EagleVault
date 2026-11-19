@@ -1,5 +1,7 @@
 # EagleVault Phase 1 — Source Audit and Implementation Plan
 
+> Historical Vaultwarden compatibility work. Current implementation targets EagleVault Core. See [implementation status](IMPLEMENTATION-STATUS.md) for the active milestones.
+
 Audit date: 2026-11-19. Scope: Android + Web. UI foundation: Proton Pass. Backend: self-hosted Vaultwarden via its Bitwarden-compatible API.
 
 ## Decisions

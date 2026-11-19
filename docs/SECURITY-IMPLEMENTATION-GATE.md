@@ -1,6 +1,8 @@
 
 # Security implementation gate
 
+> Historical Vaultwarden compatibility work. Current implementation targets EagleVault Core. See [implementation status](IMPLEMENTATION-STATUS.md) for the active milestones.
+
 EagleVault must not enable account creation, login, or vault writes until all of these are complete:
 
 1. Parse the server's pre-login KDF type and parameters. Support both PBKDF2-SHA256 and Argon2id as required by the account; reject invalid or downgraded parameters.

@@ -2,6 +2,28 @@
 
 Last updated: 2026-11-19
 
+## Current Core milestone
+
+**Android artifact scope:** The DevProd debug APK verifies build and packaging. Its account screen still uses upstream Proton authentication. EagleVault signup and login require an Android auth integration and an operational Core authentication API. Use synthetic data for integration tests.
+
+The current EagleVault Core adapter uses Cloudflare Workers and SQLite-backed Durable Objects behind a portable HTTP contract. Cloudflare is the initial production target, with Workers Static Assets for Web and Workers for the API. A Debian-packaged standalone server is a future VPS migration option. EC2 is for development and lightweight tests. Run Android builds in GitHub Actions because EC2 has insufficient RAM for the full Gradle build. Vaultwarden is a historical integration reference. The Core SQLite store implements transactionally revisioned item and folder writes, conflict detection, tombstones, and incremental reads. The Worker keeps public vault and authentication routes closed. Local workerd verifies a separately gated registration path for synthetic accounts using the pinned Bitwarden SDK. Android account wiring and Cloudflare staging remain pending.
+
+- [x] Reproduce the Core and Web contracts on the EC2 development host.
+- [x] Add SQLite tests for cursor ordering, conflicts, tombstones and rollback.
+- [x] Exercise the SQLite Durable Object binding in local workerd with two synthetic objects and a synthetic write and sync.
+- [ ] Freeze the versioned HTTP API, ciphertext envelope and SDK compatibility rules.
+- [ ] Implement account provisioning, token rotation and account-scoped authorization.
+- [ ] Wire Core routes, limits and idempotency. Verify synthetic Web CRUD and sync end to end.
+- [x] Diagnose Android CI run 44440824171 and restore the pinned upstream Gradle launcher omitted by the import.
+- [x] Build the DevProd debug APK and publish the [GitHub Actions artifact](https://github.com/arslanahmedkmlg-byte/EagleVault/actions/runs/44583550088/artifacts/14559339315) from `codex/android-ci-apk` at `16754450`. Device installation and end-to-end Android integration remain pending.
+- [ ] Integrate the Android SDK and verify Web/Android vectors.
+- [ ] For a future VPS migration, implement the standalone server and SQLite adapter against the same HTTP contract.
+- [ ] Exercise encrypted backup and restore into the standalone SQLite adapter.
+- [ ] For a future VPS migration, build the backend .deb and verify clean install, upgrade, data preservation and rollback on the production server’s Debian release and architecture.
+- [ ] Complete independent security and license reviews, then obtain release and deployment authorization.
+
+The adapter milestones below describe the earlier compatibility prototype.
+
 ## Completed
 - Imported Proton Pass Android source snapshot into android/upstream.
 - Imported Proton Pass Web application plus shared workspace packages/configuration into web/upstream; unrelated Proton web apps and browser extension/desktop clients were excluded.

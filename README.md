@@ -1,13 +1,14 @@
 # EagleVault
 
-A Proton Pass-derived password manager for **Android and Web**, targeting a self-hosted Vaultwarden-compatible backend.
+A Proton Pass-derived password manager for **Android and Web**. Clients connect to EagleVault Core through a portable, versioned HTTP API. The first production release targets Cloudflare Workers Static Assets for Web, Workers for the API, and SQLite-backed Durable Objects for encrypted vault storage. A future Linux VPS migration can use a standalone backend packaged as a .deb. EC2 is for development and lightweight tests. GitHub Actions builds Android and publishes debug APK artifacts.
 
 EagleVault is developed in **one public repository**. Android, Web, backend compatibility, shared contracts, documentation and tests live together.
 
 ## Repository layout
 - android/upstream/ — imported Proton Pass Android source snapshot.
 - web/upstream/ — imported Proton Pass Web application and shared workspace packages.
-- backend/vaultwarden/ — imported Vaultwarden source snapshot.
+- backend/eaglevault-core/ — Worker and SQLite-backed Durable Object implementation.
+- backend/vaultwarden/ — imported Vaultwarden protocol and source reference.
 - shared/proton-pass-common/ — imported Proton Pass shared Rust source.
 - shared/contracts/ — EagleVault domain, API and crypto-boundary contracts.
 - web/src/ — EagleVault Web adapter work.
@@ -26,4 +27,4 @@ EagleVault is developed in **one public repository**. Android, Web, backend comp
 The root LICENSE is AGPL-3.0 for the combined project. Original upstream copyright notices and license terms remain applicable to upstream-derived code. See LICENSES/README.md and docs/UPSTREAM-IMPORTS.md. No Bitwarden commercial-module code may be copied into EagleVault.
 
 ## Status
-The upstream source snapshots, initial contracts and standalone Web transport are present. The Web transport is not yet connected to Proton's auth, crypto or sync systems, and Android integration is not yet implemented. See docs/IMPLEMENTATION-STATUS.md.
+Core initializes and tests encrypted-record storage and revisioned sync. Its public authentication and vault routes are disabled. The Web preview and Android transport use earlier Vaultwarden-compatible adapters. See docs/IMPLEMENTATION-STATUS.md for current milestones.
