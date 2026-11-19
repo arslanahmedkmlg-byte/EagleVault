@@ -3,15 +3,13 @@ when:
 
 steps:
   - name: test
-    image: alpine
-    backend: local
+    image: local
     commands:
-      - cd android/upstream
+      - cd /root/projects/eaglevault/EagleVault/android/upstream
       - ./gradlew :pass:eaglevault:api:test
 
   - name: build
-    image: alpine
-    backend: local
+    image: local
     commands:
-      - cd android/upstream
+      - cd /root/projects/eaglevault/EagleVault/android/upstream
       - ./gradlew :app:assembleDevDebug -PapkBuild=true -PdisableSentryUpload=true
