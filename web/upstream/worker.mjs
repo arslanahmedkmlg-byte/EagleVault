@@ -6,7 +6,7 @@ const baseContentSecurityPolicy = [
   "frame-ancestors 'none'",
   "img-src 'self' data: blob:",
   "object-src 'none'",
-  "script-src 'self' 'wasm-unsafe-eval'",
+  "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
   "worker-src 'self' blob:",
 ];

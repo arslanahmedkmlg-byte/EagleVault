@@ -1,21 +1,28 @@
 import { createRoot } from 'react-dom/client';
 
-import { fileStorageReady } from '@proton/pass/lib/file-storage/fs';
 import '@proton/polyfill';
 import { initSafariFontFixClassnames } from '@proton/shared/lib/helpers/initSafariFontFixClassnames';
 
-import { App } from './App';
+import { EagleVaultApp } from './EagleVault/EagleVaultApp';
+import { isEagleVaultMode } from './EagleVault/mode';
 import './style';
 
 initSafariFontFixClassnames();
 
-void fileStorageReady.then((instance) => {
-    /** Clear only the GC queue on startup to handle multiple
-     * concurrent sessions across browser tabs */
-    instance.attachGarbageCollector(localStorage);
-    return instance.gc?.clearQueue();
-});
-
 const container = document.querySelector('.app-root');
 const root = createRoot(container!);
-root.render(<App />);
+const eagleVaultMode = isEagleVaultMode(window.location.hostname, window.location.search);
+
+if (eagleVaultMode) {
+    root.render(<EagleVaultApp />);
+} else {
+    void import('@proton/pass/lib/file-storage/fs').then(({ fileStorageReady }) => {
+        void fileStorageReady.then((instance) => {
+            /** Clear only the GC queue on startup to handle multiple
+             * concurrent sessions across browser tabs */
+            instance.attachGarbageCollector(localStorage);
+            return instance.gc?.clearQueue();
+        });
+    });
+    void import('./App').then(({ App }) => root.render(<App />));
+}
