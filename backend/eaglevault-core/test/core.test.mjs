@@ -23,7 +23,7 @@ test('Durable Object does not expose unauthenticated data', async () => {
   assert.equal(response.status, 501);
 });
 
-test('public account registration and synthetic registration stay disabled by default', async () => {
+test('account registration and synthetic registration stay disabled by default', async () => {
   const registration = await core.fetch(new Request('https://api.example.test/v1/accounts/register', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -75,4 +75,35 @@ test('staging Core fails closed and requires a rate-limited staging access key',
     { ...env, RATE_LIMITS: rateLimits(429) },
   );
   assert.equal(rateLimited.status, 429);
+});
+
+test('public registration can be enabled without a staging secret and retains rate limits', async () => {
+  const registrations = [];
+  const env = {
+    REGISTRATION_ENABLED: 'true',
+    RATE_LIMITS: rateLimits(),
+    VAULTS: {
+      idFromName: name => name,
+      get: () => ({ fetch: async (_url, init) => {
+        registrations.push(JSON.parse(init.body));
+        return Response.json({ status: 'created' }, { status: 201 });
+      } }),
+    },
+  };
+  const result = await core.fetch(new Request('https://api.example.test/v1/accounts/register', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'https://eaglevault.eaglenet.asia' },
+    body: JSON.stringify({
+      email: 'public-user@example.test',
+      authenticationHash: 'A'.repeat(43) + '=',
+      wrappedUserKey: '2.synthetic-wrapped-key',
+    }),
+  }), env);
+  assert.equal(result.status, 201);
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0].email, 'public-user@example.test');
+  const limited = await core.fetch(new Request('https://api.example.test/v1/accounts/register', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+  }), { ...env, RATE_LIMITS: rateLimits(429) });
+  assert.equal(limited.status, 429);
 });

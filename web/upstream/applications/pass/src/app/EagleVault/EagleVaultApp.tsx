@@ -185,7 +185,7 @@ export const EagleVaultApp = () => {
         clearSession();
         try {
             await initializeBitwardenCryptoSdk();
-            const client = new EagleVaultClient(undefined, fetch, isEagleVaultStaging ? stagingAccessKey : undefined);
+            const client = new EagleVaultClient(undefined, undefined, isEagleVaultStaging ? stagingAccessKey : undefined);
             const cryptoProvider = new BitwardenCryptoProvider();
             cryptoRef.current = cryptoProvider;
             const session = mode === 'register'
