@@ -133,6 +133,11 @@ export default {
     const response = await env.ASSETS.fetch(request);
     const headers = new Headers(response.headers);
     securityHeaders(headers, apiOrigin);
+    const pathname = new URL(request.url).pathname;
+    const contentType = headers.get('content-type') ?? '';
+    if (contentType.includes('text/html') || pathname === '/pass.service-worker.js') {
+      headers.set('cache-control', 'no-store');
+    }
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,

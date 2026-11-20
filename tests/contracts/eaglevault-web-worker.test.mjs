@@ -137,3 +137,13 @@ test("staging never invokes the production same-origin Core proxy", async () => 
   assert.equal(await response.text(), "staging asset");
   assert.equal(reads, 1);
 });
+
+test("serves HTML and service worker without persistent browser caching", async () => {
+  const env = { ASSETS: { fetch: async request =>
+    new Response("asset", { headers: { "content-type": new URL(request.url).pathname.endsWith(".js")
+      ? "application/javascript" : "text/html" } }) } };
+  const page = await webWorker.fetch(new Request("https://eaglevault.eaglenet.asia/"), env);
+  assert.equal(page.headers.get("cache-control"), "no-store");
+  const worker = await webWorker.fetch(new Request("https://eaglevault.eaglenet.asia/pass.service-worker.js"), env);
+  assert.equal(worker.headers.get("cache-control"), "no-store");
+});

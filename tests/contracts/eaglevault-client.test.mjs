@@ -118,3 +118,19 @@ test("default fetch preserves the browser global receiver", async () => {
     globalThis.fetch = original;
   }
 });
+
+test("login rejection shows specific credential guidance", async () => {
+  const client = new EagleVaultClient("https://api.example.test", async () =>
+    Response.json({ error: "invalid_credentials" }, { status: 401 }));
+  await assert.rejects(client.login("user@example.test", "synthetic-verifier"), (error) =>
+    error instanceof EagleVaultApiError && error.status === 401 &&
+    /Invalid email or master password/.test(error.message));
+});
+
+test("duplicate registration shows sign-in guidance", async () => {
+  const client = new EagleVaultClient("https://api.example.test", async () =>
+    Response.json({ error: "account_exists" }, { status: 409 }));
+  await assert.rejects(client.register("user@example.test", "synthetic", "2.synthetic"), (error) =>
+    error instanceof EagleVaultApiError && error.status === 409 &&
+    /already exists/.test(error.message));
+});

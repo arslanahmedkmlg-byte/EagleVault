@@ -248,10 +248,14 @@ export class EagleVaultClient {
       return this.request<T>(path, init, authenticated, true);
     }
     if (!response.ok) {
-      throw new EagleVaultApiError(
-        `EagleVault Core request failed (${response.status}).`,
-        response.status,
-      );
+      const message = response.status === 401 && path === '/v1/auth/login'
+        ? 'Invalid email or master password. If you have not created an account, select Create an EagleVault account.'
+        : response.status === 409 && path === '/v1/accounts/register'
+          ? 'An account with this email already exists. Select Sign in.'
+          : response.status === 429
+            ? 'Too many requests. Please try again later.'
+            : `EagleVault Core request failed (${response.status}).`;
+      throw new EagleVaultApiError(message, response.status);
     }
     if (response.status === 204) return undefined as T;
     const text = await response.text();
