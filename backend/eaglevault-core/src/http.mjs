@@ -1,6 +1,11 @@
 const defaultOrigins = new Set(['https://eaglevault.eaglenet.asia']);
 const methods = new Set(['GET', 'POST', 'PUT', 'DELETE']);
-const headers = new Set(['authorization', 'content-type', 'x-eaglevault-staging-key']);
+const productionHeaders = new Set(['authorization', 'content-type']);
+const stagingHeaders = new Set(['authorization', 'content-type', 'x-eaglevault-staging-key']);
+
+function allowedHeaders(env) {
+  return env?.STAGING_MODE === 'true' ? stagingHeaders : productionHeaders;
+}
 
 function allowedOrigins(env) {
   const configured = env?.CORS_ORIGINS;
@@ -68,7 +73,7 @@ function preflight(request, env) {
 
   if (origin === null || !allowedOrigins(env).has(origin) ||
       !requestedMethod || !methods.has(requestedMethod) ||
-      requestedHeaders.some(header => !headers.has(header))) {
+      requestedHeaders.some(header => !allowedHeaders(env).has(header))) {
     return Response.json({ error: 'cors_preflight_rejected' }, {
       status: 403,
       headers: responseHeaders,
@@ -77,7 +82,7 @@ function preflight(request, env) {
 
   responseHeaders.set('access-control-allow-origin', origin);
   responseHeaders.set('access-control-allow-methods', [...methods].join(', '));
-  responseHeaders.set('access-control-allow-headers', [...headers].join(', '));
+  responseHeaders.set('access-control-allow-headers', [...allowedHeaders(env)].join(', '));
   responseHeaders.set('access-control-max-age', '600');
   return new Response(null, { status: 204, headers: responseHeaders });
 }
