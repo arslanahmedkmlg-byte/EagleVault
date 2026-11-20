@@ -68,7 +68,7 @@ export class EagleVaultClient {
 
   constructor(
     baseUrl = defaultCoreApiOrigin,
-    fetchImpl: typeof fetch = fetch,
+    fetchImpl: typeof fetch = (...args) => globalThis.fetch(...args),
     stagingAccessKey?: string,
   ) {
     const parsed = new URL(baseUrl);

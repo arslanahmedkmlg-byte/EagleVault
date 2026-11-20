@@ -31,7 +31,7 @@ export class VaultwardenIdentityClient {
   private readonly endpoint: string;
   private readonly fetchImpl: typeof fetch;
 
-  constructor(serverUrl: string, fetchImpl: typeof fetch = fetch) {
+  constructor(serverUrl: string, fetchImpl: typeof fetch = (...args) => globalThis.fetch(...args)) {
     const base = new URL(serverUrl);
     if (base.protocol !== "https:" && base.hostname !== "localhost" && base.hostname !== "127.0.0.1") {
       throw new Error("Vaultwarden server URL must use HTTPS.");

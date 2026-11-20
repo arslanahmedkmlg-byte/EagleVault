@@ -31,7 +31,7 @@ interface PreloginWireResponse {
 export async function fetchVaultwardenPrelogin(
   serverUrl: string,
   email: string,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = (...args) => globalThis.fetch(...args),
 ): Promise<PreloginResult> {
   const base = new URL(serverUrl);
   if (base.protocol !== "https:" && base.hostname !== "localhost" && base.hostname !== "127.0.0.1") {

@@ -103,3 +103,18 @@ test("logout revokes the token before clearing in-memory session state", async (
   assert.equal(requests[1].url, "https://api.example.test/v1/auth/logout");
   assert.equal(requests[1].init.headers.get("Authorization"), `Bearer ${tokens().access_token}`);
 });
+
+test("default fetch preserves the browser global receiver", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = function (url) {
+    assert.equal(this, globalThis);
+    return Promise.resolve(Response.json({ kdf: 0, kdfIterations: 600000 }));
+  };
+  try {
+    const client = new EagleVaultClient("https://api.example.test");
+    const result = await client.discoverKdf("user@example.test");
+    assert.equal(result.kdf.iterations, 600000);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
