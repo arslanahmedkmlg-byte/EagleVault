@@ -10,6 +10,10 @@ import {
     unlockWithPasskey, updateProtectedSession, type ProtectedUnlock,
 } from 'eaglevault/auth/eaglevault-passkey';
 
+import { PassFolderIcon } from '../../../../../packages/pass/components/Folders/PassFolderIcon';
+import { IcUser } from '@proton/icons/icons/IcUser';
+import { IcPlus } from '@proton/icons/icons/IcPlus';
+
 import { isEagleVaultStaging } from './mode';
 import './EagleVaultApp.scss';
 
@@ -79,6 +83,7 @@ const wipeFolder = (folder: VaultFolder): void => {
 
 export const EagleVaultApp = () => {
     const [screen, setScreen] = useState<Screen>('auth');
+    const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
     const [authMode, setAuthMode] = useState<AuthMode>('login');
     const [email, setEmail] = useState('');
     const [masterPassword, setMasterPassword] = useState('');
@@ -206,6 +211,7 @@ export const EagleVaultApp = () => {
             await loadVault(client, session.userKey);
             setEmail(session.email);
             setScreen('vault');
+            setMobileView('list');
         } catch (cause) {
             userKeyRef.current?.fill(0);
             userKeyRef.current = null;
@@ -268,6 +274,7 @@ export const EagleVaultApp = () => {
             passkeyRef.current = protectedUnlock;
             setEmail(protectedUnlock.email);
             setScreen('vault');
+            setMobileView('list');
             setAuthMode('login');
             setNotice('Vault unlocked using your device screen lock.');
         } catch (cause) {
@@ -508,7 +515,27 @@ export const EagleVaultApp = () => {
                                 <button type="button" onClick={logout} disabled={busy}>Log out</button>
                             </div>
                         </div>
-                        <div className="eaglevault__workspace">
+                        <div className="eaglevault__mobile-navigation" role="navigation" aria-label="Vault navigation">
+                            <button type="button" className={mobileView === 'list' ? 'is-active' : ''}
+                                onClick={() => setMobileView('list')}>All items</button>
+                            <button type="button" className={mobileView === 'detail' ? 'is-active' : ''}
+                                onClick={() => setMobileView('detail')}>{editingId ? 'Edit login' : selectedItem ? 'Details' : 'New login'}</button>
+                        </div>
+                        <div className={'eaglevault__workspace eaglevault__workspace--' + mobileView}>
+                            <nav className="eaglevault__primary-sidebar" aria-label="Vault sections">
+                                <div className="eaglevault__sidebar-label">YOUR VAULT</div>
+                                <button type="button" className="is-active" onClick={() => setMobileView('list')}>
+                                    <IcUser size={4} /> All items <span>{items.length}</span>
+                                </button>
+                                <div className="eaglevault__sidebar-label">ORGANIZE</div>
+                                <button type="button" onClick={() => setMobileView('list')}>
+                                    <PassFolderIcon size={4}/> Folders <span>{folders.length}</span>
+                                </button>
+                                <button type="button" className="eaglevault__sidebar-create"
+                                    onClick={() => { setSelectedId(null); setEditingId(null); setDraft(emptyDraft()); setMobileView('detail'); }}>
+                                    <IcPlus size={4}/> New login
+                                </button>
+                            </nav>
                             <section className="eaglevault__vault-list">
                                 <label className="eaglevault__search">
                                     <span className="eaglevault__visually-hidden">Search logins</span>
@@ -516,8 +543,8 @@ export const EagleVaultApp = () => {
                                         onChange={(event) => setQuery(event.target.value)} />
                                 </label>
                                 <button type="button" className="eaglevault__secondary-button"
-                                    onClick={() => { setSelectedId(null); setEditingId(null); setDraft(emptyDraft()); }}>
-                                    Add login
+                                    onClick={() => { setSelectedId(null); setEditingId(null); setDraft(emptyDraft()); setMobileView('detail'); }}>
+                                    <IcPlus size={4}/> Add login
                                 </button>
                                 <div className="eaglevault__items" aria-label="Vault logins">
                                     {filteredItems.length === 0
@@ -527,8 +554,9 @@ export const EagleVaultApp = () => {
                                                 className={'eaglevault__item' + (selectedId === item.id ? ' is-selected' : '')}
                                                 key={item.id}
                                                 type="button"
-                                                onClick={() => { setSelectedId(item.id); setEditingId(null); setShowPassword(false); }}
+                                                onClick={() => { setSelectedId(item.id); setEditingId(null); setShowPassword(false); setMobileView('detail'); }}
                                             >
+                                                <span className="eaglevault__login-icon"><IcUser size={4}/></span>
                                                 <span className="eaglevault__item-title">{item.name || 'Untitled login'}</span>
                                                 <span className="eaglevault__item-subtitle">{item.username || item.website}</span>
                                                 <span className="eaglevault__item-type">Login</span>
@@ -546,7 +574,7 @@ export const EagleVaultApp = () => {
                                 <ul className="eaglevault__folder-list" aria-label="Vault folders">
                                     {folders.map((folder) => (
                                         <li key={folder.id}>
-                                            <span>{folder.name}</span>
+                                            <span className="eaglevault__folder-name"><PassFolderIcon size={4}/>{folder.name}</span>
                                             <button type="button" onClick={() => deleteFolder(folder)} disabled={busy}
                                                 aria-label={`Delete ${folder.name} folder`}>Delete</button>
                                         </li>
