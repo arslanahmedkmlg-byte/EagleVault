@@ -49,7 +49,8 @@ const result = async (opts: WebpackEnvArguments): Promise<Configuration> => {
             EXTENSION_BUILD: false,
             OFFLINE_SUPPORTED: true,
             EAGLEVAULT_API_URL: JSON.stringify(
-                process.env.EAGLEVAULT_API_URL ?? 'https://api.eaglevault.eaglenet.asia'
+                process.env.EAGLEVAULT_API_URL ?? (process.env.EAGLEVAULT_STAGING_MODE === 'true'
+                    ? 'https://api.eaglevault.eaglenet.asia' : 'https://eaglevault.eaglenet.asia')
             ),
             EAGLEVAULT_STAGING_MODE: JSON.stringify(process.env.EAGLEVAULT_STAGING_MODE === 'true'),
         })

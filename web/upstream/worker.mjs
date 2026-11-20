@@ -51,6 +51,49 @@ function securityHeaders(headers, apiOrigin) {
   headers.set('x-frame-options', 'DENY');
 }
 
+const publicCoreProxyPaths = new Set(['/api/accounts/prelogin', '/identity/connect/token']);
+
+function isProductionCoreRequest(pathname) {
+  return pathname.startsWith('/v1/') || publicCoreProxyPaths.has(pathname);
+}
+
+async function proxyCoreRequest(request, apiOrigin) {
+  if (request.method !== 'GET' && request.method !== 'POST' &&
+      request.method !== 'PUT' && request.method !== 'DELETE') {
+    return new Response('Method not allowed', { status: 405, headers: { 'cache-control': 'no-store' } });
+  }
+  const upstream = new URL(request.url);
+  upstream.host = new URL(apiOrigin).host;
+  upstream.protocol = 'https:';
+  const headers = new Headers(request.headers);
+  headers.delete('cookie');
+  headers.delete('host');
+  const outgoing = new Request(upstream.toString(), {
+    method: request.method,
+    headers,
+    body: request.method === 'GET' ? undefined : request.body,
+    duplex: 'half',
+    redirect: 'manual',
+  });
+  try {
+    const response = await fetch(outgoing, { redirect: 'manual' });
+    if (response.status >= 300 && response.status < 400) {
+      return new Response('Unexpected API redirect', { status: 502, headers: { 'cache-control': 'no-store' } });
+    }
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.set('cache-control', 'no-store');
+    responseHeaders.set('x-content-type-options', 'nosniff');
+    responseHeaders.delete('set-cookie');
+    return new Response(response.body, {
+      status: response.status, statusText: response.statusText, headers: responseHeaders,
+    });
+  } catch {
+    return Response.json({ error: 'core_unreachable' }, {
+      status: 502, headers: { 'cache-control': 'no-store' },
+    });
+  }
+}
+
 export default {
   async fetch(request, env) {
     const staging = env.STAGING_MODE === 'true';
@@ -82,6 +125,10 @@ export default {
         status: 401,
         headers,
       });
+    }
+    if (!staging && isProductionCoreRequest(new URL(request.url).pathname)) {
+      if (!apiOrigin) return new Response('Core API unavailable', { status: 503 });
+      return proxyCoreRequest(request, apiOrigin);
     }
     const response = await env.ASSETS.fetch(request);
     const headers = new Headers(response.headers);
