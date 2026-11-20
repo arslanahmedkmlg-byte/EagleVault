@@ -11,6 +11,7 @@ import {
 } from 'eaglevault/auth/eaglevault-passkey';
 
 import { PassFolderIcon } from '../../../../../packages/pass/components/Folders/PassFolderIcon';
+import { IconBox } from '../../../../../packages/pass/components/Layout/Icon/IconBox';
 import { IcUser } from '@proton/icons/icons/IcUser';
 import { IcPlus } from '@proton/icons/icons/IcPlus';
 
@@ -556,7 +557,9 @@ export const EagleVaultApp = () => {
                                                 type="button"
                                                 onClick={() => { setSelectedId(item.id); setEditingId(null); setShowPassword(false); setMobileView('detail'); }}
                                             >
-                                                <span className="eaglevault__login-icon"><IcUser size={4}/></span>
+                                                <IconBox mode="icon" pill size={5} className="eaglevault__login-icon">
+                                                    <IcUser size={4}/>
+                                                </IconBox>
                                                 <span className="eaglevault__item-title">{item.name || 'Untitled login'}</span>
                                                 <span className="eaglevault__item-subtitle">{item.username || item.website}</span>
                                                 <span className="eaglevault__item-type">Login</span>
