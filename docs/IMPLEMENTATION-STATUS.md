@@ -1,8 +1,21 @@
 # Implementation status
 
-Last updated: 2026-11-19
+Last updated: 2026-11-20
 
-## Current milestone: isolated Cloudflare staging deployment
+## Current milestone: production Web/Core deployment
+
+**Production (authorized initial testing deployment):**
+- Web: `https://eaglevault.eaglenet.asia` — HTTP 200
+- Core: `https://api.eaglevault.eaglenet.asia` — HTTP 200 health
+- Core Worker version: `dc237cf2-30bb-4ecc-92bd-966abb69a8c6`
+- Web Worker version: `7a4bd00d-f38a-4846-baa1-e35219dd1d9e`
+- Git commit: `ca7dc61f18dff688fc861122bed28085b285164c`
+- Registration: disabled
+- DNS: Cloudflare-proxied Workers Custom Domains; no IP records for these hostnames
+- TLS: valid Cloudflare certificates observed for both hostnames
+- Deep links `/app/`, `/settings/`, and `/vault/item/test`: HTTP 200
+
+**Production-domain checks passed:** Core health, Web root/deep routes, HSTS/CSP/referrer/framing/content-type headers, exact production CORS origin, rejection of attacker origins and the staging-only header, disabled registration, KDF discovery, unauthenticated vault rejection, and absence of staging URLs in the production JavaScript entry.
 
 **Live staging (isolated; no production DNS or production Workers changed):**
 - Web: `https://eaglevault-web-staging.arslanahmed-kmlg.workers.dev`
@@ -13,7 +26,7 @@ Last updated: 2026-11-19
 
 **Deployed staging acceptance passed:** HTTPS, Basic-auth static assets, Core staging access key, exact CORS origin, HSTS/CSP/security headers, synthetic registration, login/unlock, encrypted create/read/edit/delete, persistence/relogin, synchronization, refresh rotation, replay rejection, logout revocation, account isolation, and plaintext request-body/export checks.
 
-The active branch is `codex/web-first`, based on the reviewed `handoff/server-core-2026-11-20` commit `4de39d80`. The local `main` branch is unchanged. Current edits are uncommitted. No Cloudflare resources, DNS records, or production deployments have been changed. Android feature work has not started.
+The active branch is `codex/web-first`, based on the reviewed `handoff/server-core-2026-11-20` commit `4de39d80`. The local `main` branch is unchanged. Production deployment is live at the EagleVault custom domains for restricted initial testing; Android feature work has not started.
 
 The EagleVault Core now has account registration, fixed PBKDF2 KDF discovery, derived-password authentication, access/refresh token rotation and revocation, per-account and per-IP rate limits, encrypted-record CRUD, versioned sync/conflict handling, and encrypted-record snapshot export/import. Account and vault persistence use the portable SQLite interface; Cloudflare SQLite-backed Durable Objects are the initial adapter. Snapshot export/import does not include accounts or sessions, and a working Linux storage adapter is still missing.
 
