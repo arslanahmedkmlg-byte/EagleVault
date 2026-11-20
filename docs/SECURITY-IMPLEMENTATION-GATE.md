@@ -32,3 +32,7 @@ This staging acceptance does not replace an independent cryptographic security r
 The production Web and Core custom domains were deployed on 2026-11-20 at commit `ca7dc61f18dff688fc861122bed28085b285164c`.
 
 Production registration is currently disabled (`REGISTRATION_ENABLED=false`). Vault APIs still require bearer authentication. CORS allows only `https://eaglevault.eaglenet.asia`, and the staging key header is rejected as a production CORS header. Staging is deployed under separate Worker names and workers.dev URLs with no production data binding.
+
+## Browser startup review
+
+Mobile Chromium testing on 2026-11-20 identified and fixed a Proton-provider boot dependency that prevented EagleVault mode from rendering. EagleVault now renders before Proton app modules load, and the live Web app showed no page exceptions, console errors, failed assets, HTTP error responses, or Proton account/API requests.

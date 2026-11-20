@@ -17,6 +17,8 @@ Last updated: 2026-11-20
 
 **Production-domain checks passed:** Core health, Web root/deep routes, HSTS/CSP/referrer/framing/content-type headers, exact production CORS origin, rejection of attacker origins and the staging-only header, disabled registration, KDF discovery, unauthenticated vault rejection, and absence of staging URLs in the production JavaScript entry.
 
+**Browser boot fix deployed 2026-11-20:** Commit `053ea592`. Mobile Chromium verification passed for `/`, `/settings/`, and the EagleVault unlock screen. No page exceptions, console errors, failed assets, HTTP error responses, or Proton account/API requests were observed. The Web-only Worker version is `9f7de03a-7aed-40ad-8ea0-3559e4ee329d`.
+
 **Live staging (isolated; no production DNS or production Workers changed):**
 - Web: `https://eaglevault-web-staging.arslanahmed-kmlg.workers.dev`
 - Core: `https://eaglevault-core-staging.arslanahmed-kmlg.workers.dev`
