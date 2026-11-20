@@ -65,6 +65,7 @@ export class EagleVaultClient {
   private readonly fetchImpl: typeof fetch;
   private readonly stagingAccessKey?: string;
   private session: SessionTokens | undefined;
+  private refreshTokenObserver?: (token: string) => Promise<void>;
 
   constructor(
     baseUrl = defaultCoreApiOrigin,
@@ -130,11 +131,29 @@ export class EagleVaultClient {
         body: JSON.stringify({ refreshToken: this.session.refreshToken }),
       }, false);
       this.setSession(response);
+      await this.refreshTokenObserver?.(response.refresh_token);
       return response;
     } catch (error) {
       this.session = undefined;
       throw error;
     }
+  }
+
+  currentRefreshToken(): string {
+    if (!this.session) throw new EagleVaultApiError("Sign in to continue.", 401);
+    return this.session.refreshToken;
+  }
+
+  setRefreshTokenObserver(observer?: (token: string) => Promise<void>): void {
+    this.refreshTokenObserver = observer;
+  }
+
+  async resumeWithRefreshToken(refreshToken: string): Promise<void> {
+    if (!/^evr1\.[0-9a-f]{64}\.[A-Za-z0-9_-]{43}$/.test(refreshToken)) {
+      throw new EagleVaultApiError("Invalid protected session. Sign in again.", 401);
+    }
+    this.session = { accessToken: '', refreshToken, expiresAt: 0 };
+    await this.refresh();
   }
 
   async sync(after = 0): Promise<VaultSyncPage[]> {

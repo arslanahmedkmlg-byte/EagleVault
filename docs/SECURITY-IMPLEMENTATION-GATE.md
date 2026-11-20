@@ -36,3 +36,11 @@ Production registration is currently disabled (`REGISTRATION_ENABLED=false`). Va
 ## Browser startup review
 
 Mobile Chromium testing on 2026-11-20 identified and fixed a Proton-provider boot dependency that prevented EagleVault mode from rendering. EagleVault now renders before Proton app modules load, and the live Web app showed no page exceptions, console errors, failed assets, HTTP error responses, or Proton account/API requests.
+
+## Optional Web device screen-lock unlock (WebAuthn PRF)
+- The Web UI can opt in after a successful master-password login. WebAuthn `userVerification: required` invokes the device's passkey/biometric/PIN screen-lock verification.
+- A 32-byte credential PRF output is imported as a non-extractable AES-GCM key to encrypt the 64-byte vault user key and a rotating refresh token before they are saved in the browser's local storage. The encryption uses a fresh 96-bit nonce and account/origin-bound associated data; plaintext keys and tokens are not stored in local storage.
+- This is **local passkey-protected unlock, not server-verified WebAuthn authentication**. A valid encrypted refresh token is still required for Core reauthentication. Core sessions are refreshed and the protected token is re-encrypted after rotation.
+- Master-password login remains available, including when the browser lacks the PRF extension or device verification fails. The passkey and encrypted local state are browser-profile-specific and not an account recovery method.
+- Lock clears in-memory vault material while retaining an encrypted refresh token to allow another local passkey unlock. Explicit logout revokes the current session and deletes that browser's stored unlock record. Clearing browser storage also removes the local unlock.
+- Browser/device PRF support and all account recovery paths remain subject to actual-device verification and independent security review. Same-origin XSS or malicious browser extensions remain material threats. Never claim biometric-only server authentication.

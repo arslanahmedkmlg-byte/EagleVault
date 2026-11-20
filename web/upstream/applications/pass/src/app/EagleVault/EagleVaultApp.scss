@@ -704,3 +704,33 @@
         scroll-behavior: auto !important;
     }
 }
+
+/* Local device screen-lock / passkey unlock */
+.eaglevault__device-button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    min-height: 72px;
+    margin-top: 18px;
+    padding: 12px 20px;
+    border: 1px solid rgba(171, 162, 255, .46);
+    border-radius: 15px;
+    background: rgba(139, 131, 255, .1);
+    color: #e7e3ff;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background .2s ease, transform .2s ease, border-color .2s ease;
+}
+.eaglevault__device-button > span { font-size: 21px; line-height: 1; }
+.eaglevault__device-button small { font-size: 11px; color: var(--ev-muted); font-weight: 500; }
+.eaglevault__device-button:hover:not(:disabled) {
+    background: rgba(139, 131, 255, .17);
+    border-color: #b8b1ff;
+    transform: translateY(-1px);
+}
+.eaglevault__device-button:disabled { opacity: .6; cursor: wait; }

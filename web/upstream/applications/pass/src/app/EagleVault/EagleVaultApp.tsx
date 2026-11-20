@@ -5,6 +5,11 @@ import { loginToEagleVault, registerEagleVaultAccount } from 'eaglevault/auth/ea
 import { BitwardenCryptoProvider } from 'eaglevault/crypto/bitwarden-crypto';
 import { initializeBitwardenCryptoSdk } from 'eaglevault/crypto/bitwarden-sdk-loader';
 
+import {
+    enablePasskeyUnlock, existingPasskeyUnlock, removePasskeyUnlock,
+    unlockWithPasskey, updateProtectedSession, type ProtectedUnlock,
+} from 'eaglevault/auth/eaglevault-passkey';
+
 import { isEagleVaultStaging } from './mode';
 import './EagleVaultApp.scss';
 
@@ -89,7 +94,9 @@ export const EagleVaultApp = () => {
     const [folderName, setFolderName] = useState('');
     const [notice, setNotice] = useState('');
     const [stagingAccessKey, setStagingAccessKey] = useState('');
+    const [localPasskey, setLocalPasskey] = useState(existingPasskeyUnlock);
 
+    const passkeyRef = useRef<ProtectedUnlock | null>(null);
     const clientRef = useRef<EagleVaultClient | null>(null);
     const userKeyRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
     const cryptoRef = useRef<BitwardenCryptoProvider | null>(null);
@@ -98,6 +105,7 @@ export const EagleVaultApp = () => {
 
     useEffect(() => () => {
         userKeyRef.current?.fill(0);
+        passkeyRef.current?.userKey.fill(0);
         clearItems(itemsRef.current);
         clearFolders(foldersRef.current);
     }, []);
@@ -118,6 +126,8 @@ export const EagleVaultApp = () => {
     };
 
     const clearSession = (lock = false) => {
+        passkeyRef.current?.userKey.fill(0);
+        passkeyRef.current = null;
         userKeyRef.current?.fill(0);
         userKeyRef.current = null;
         clientRef.current?.clearSession();
@@ -203,6 +213,67 @@ export const EagleVaultApp = () => {
             clientRef.current = null;
             replaceVault([], []);
             setError(cause instanceof Error ? cause.message : 'Unable to connect to EagleVault Core.');
+        } finally {
+            setMasterPassword('');
+            setBusy(false);
+        }
+    };
+
+    const enableDeviceUnlock = async () => {
+        const client = clientRef.current;
+        const userKey = userKeyRef.current;
+        if (!client || !userKey) return;
+        setBusy(true);
+        setError('');
+        try {
+            const protectedUnlock = await enablePasskeyUnlock(email, userKey, client.currentRefreshToken());
+            passkeyRef.current?.userKey.fill(0);
+            passkeyRef.current = protectedUnlock;
+            client.setRefreshTokenObserver(async (token) => updateProtectedSession(protectedUnlock, token));
+            setLocalPasskey(existingPasskeyUnlock());
+            setNotice('Device unlock enabled on this browser. Keep your master password: this is not account recovery.');
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : 'Unable to enable device unlock.');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const disableDeviceUnlock = () => {
+        clientRef.current?.setRefreshTokenObserver(undefined);
+        passkeyRef.current?.userKey.fill(0);
+        passkeyRef.current = null;
+        removePasskeyUnlock();
+        setLocalPasskey(null);
+        setNotice('Device unlock was removed from this browser.');
+    };
+
+    const unlockDevice = async () => {
+        setBusy(true);
+        setError('');
+        setNotice('');
+        clearSession();
+        let protectedUnlock: ProtectedUnlock | null = null;
+        try {
+            protectedUnlock = await unlockWithPasskey();
+            const client = new EagleVaultClient(undefined, undefined,
+                isEagleVaultStaging ? stagingAccessKey : undefined);
+            client.setRefreshTokenObserver(async token => updateProtectedSession(protectedUnlock!, token));
+            await client.resumeWithRefreshToken(protectedUnlock.refreshToken);
+            await initializeBitwardenCryptoSdk();
+            cryptoRef.current = new BitwardenCryptoProvider();
+            await loadVault(client, protectedUnlock.userKey);
+            clientRef.current = client;
+            userKeyRef.current = protectedUnlock.userKey;
+            passkeyRef.current = protectedUnlock;
+            setEmail(protectedUnlock.email);
+            setScreen('vault');
+            setAuthMode('login');
+            setNotice('Vault unlocked using your device screen lock.');
+        } catch (cause) {
+            protectedUnlock?.userKey.fill(0);
+            clearSession();
+            setError(cause instanceof Error ? cause.message : 'Device unlock failed. Sign in with your master password.');
         } finally {
             setMasterPassword('');
             setBusy(false);
@@ -330,6 +401,10 @@ export const EagleVaultApp = () => {
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : 'The server session could not be revoked.');
         } finally {
+            if (existingPasskeyUnlock()?.email === email.toLowerCase()) {
+                removePasskeyUnlock();
+                setLocalPasskey(null);
+            }
             clearSession();
             setStagingAccessKey('');
             setBusy(false);
@@ -380,10 +455,12 @@ export const EagleVaultApp = () => {
     const lock = () => {
         void (async () => {
             try {
-                await clientRef.current?.logout();
+                if (!passkeyRef.current) await clientRef.current?.logout();
             } catch (cause) {
                 setError(cause instanceof Error ? cause.message : 'The session could not be revoked.');
             } finally {
+                passkeyRef.current?.userKey.fill(0);
+                passkeyRef.current = null;
                 userKeyRef.current?.fill(0);
                 userKeyRef.current = null;
                 clientRef.current?.clearSession();
@@ -393,7 +470,8 @@ export const EagleVaultApp = () => {
                 setScreen('auth');
                 setAuthMode('login');
                 setStagingAccessKey('');
-                setNotice('Vault locked. Sign in again to unlock it.');
+                setNotice(localPasskey ? 'Vault locked. Use your device screen lock or master password.' :
+                    'Vault locked. Sign in again to unlock it.');
             }
         })();
     };
@@ -418,6 +496,13 @@ export const EagleVaultApp = () => {
                                 <p className="eaglevault__muted">{email} · EagleVault Core</p>
                             </div>
                             <div className="eaglevault__header-actions">
+                                {localPasskey?.email === email.toLowerCase() && passkeyRef.current
+                                    ? <button type="button" onClick={disableDeviceUnlock} disabled={busy}>
+                                        Remove device unlock
+                                    </button>
+                                    : <button type="button" onClick={enableDeviceUnlock} disabled={busy}>
+                                        Enable device unlock
+                                    </button>}
                                 <button type="button" onClick={syncVault} disabled={busy}>Sync</button>
                                 <button type="button" onClick={lock} disabled={busy}>Lock</button>
                                 <button type="button" onClick={logout} disabled={busy}>Log out</button>
@@ -561,6 +646,14 @@ export const EagleVaultApp = () => {
                                 {busy ? 'Connecting…' : authMode === 'register' ? 'Create encrypted account' : 'Sign in'}
                             </button>
                         </form>
+                        {localPasskey && (
+                            <button className="eaglevault__device-button" type="button"
+                                onClick={unlockDevice} disabled={busy}>
+                                <span aria-hidden="true">◈</span>
+                                {busy ? 'Verifying…' : 'Unlock with device screen lock'}
+                                <small>{localPasskey.email}</small>
+                            </button>
+                        )}
                         <button className="eaglevault__text-button" type="button" disabled={busy}
                             onClick={() => { setAuthMode((mode) => mode === 'login' ? 'register' : 'login'); setError(''); }}>
                             {authMode === 'login' ? 'Create an EagleVault account' : 'Already registered? Sign in'}
