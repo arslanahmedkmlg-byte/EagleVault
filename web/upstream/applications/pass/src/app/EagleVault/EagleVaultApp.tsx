@@ -89,6 +89,7 @@ const wipeFolder = (folder: VaultFolder): void => {
 };
 
 export const EagleVaultApp = () => {
+    const [settingsOpen, setSettingsOpen] = useState(false);
     const [screen, setScreen] = useState<Screen>('auth');
     const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
     const [authMode, setAuthMode] = useState<AuthMode>('login');
@@ -151,6 +152,7 @@ export const EagleVaultApp = () => {
         setDraft(emptyDraft());
         setShowPassword(false);
         setQuery('');
+        setSettingsOpen(false);
         setFolderFilter(null);
         setMobileView('list');
         setScreen('auth');
@@ -280,7 +282,7 @@ export const EagleVaultApp = () => {
             cryptoRef.current = new BitwardenCryptoProvider();
             await loadVault(client, protectedUnlock.userKey);
             clientRef.current = client;
-            userKeyRef.current = protectedUnlock.userKey;
+            userKeyRef.current = protectedUnlock.userKey.slice();
             passkeyRef.current = protectedUnlock;
             setEmail(protectedUnlock.email);
             setScreen('vault');
@@ -526,18 +528,30 @@ export const EagleVaultApp = () => {
                                 <SubHeader title="Your vault" description={<span className="eaglevault__muted">{email} · EagleVault Core</span>} />
                             </div>
                             <div className="eaglevault__header-actions">
-                                {localPasskey?.email === email.toLowerCase() && passkeyRef.current
-                                    ? <button type="button" onClick={disableDeviceUnlock} disabled={busy}>
-                                        Remove device unlock
-                                    </button>
-                                    : <button type="button" onClick={enableDeviceUnlock} disabled={busy}>
-                                        Enable device unlock
-                                    </button>}
+                                <Button type="button" size="small" shape="ghost"
+                                    aria-expanded={settingsOpen} aria-controls="vault-settings"
+                                    onClick={() => setSettingsOpen((open) => !open)}>
+                                    Settings
+                                </Button>
                                 <Button type="button" size="small" shape="ghost" onClick={syncVault} disabled={busy}>Sync</Button>
                                 <Button type="button" size="small" shape="ghost" onClick={lock} disabled={busy}>Lock</Button>
                                 <Button type="button" size="small" shape="ghost" onClick={logout} disabled={busy}>Log out</Button>
                             </div>
                         </div>
+                        <section id="vault-settings" className="eaglevault__settings" hidden={!settingsOpen}
+                            aria-labelledby="vault-settings-title">
+                            <div id="vault-settings-title"><SubHeader title="Vault settings"
+                                description="Device unlock uses the screen lock on this browser." /></div>
+                            {localPasskey?.email === email.trim().toLowerCase() ? (
+                                <Button type="button" size="small" shape="outline" onClick={disableDeviceUnlock} disabled={busy}>
+                                    Remove device unlock
+                                </Button>
+                            ) : (
+                                <Button type="button" size="small" shape="outline" onClick={enableDeviceUnlock} disabled={busy}>
+                                    Enable device unlock
+                                </Button>
+                            )}
+                        </section>
                         <div className="eaglevault__mobile-navigation" role="navigation" aria-label="Vault navigation">
                             <button type="button" className={mobileView === 'list' ? 'is-active' : ''}
                                 onClick={() => setMobileView('list')}>{activeFolder?.name ?? 'All items'}</button>

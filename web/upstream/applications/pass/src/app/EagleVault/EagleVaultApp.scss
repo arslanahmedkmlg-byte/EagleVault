@@ -986,3 +986,8 @@ body:has(.eaglevault) { touch-action: pan-y pinch-zoom; }
 }
 .eaglevault__proton-editor .eaglevault__inline-actions { gap: 10px; flex-wrap: wrap; }
 .eaglevault__proton-editor .eaglevault__inline-actions button { min-height: 44px; }
+
+.eaglevault__settings {
+    padding: 1rem;
+    border-block-end: 1px solid var(--border-weak);
+}
