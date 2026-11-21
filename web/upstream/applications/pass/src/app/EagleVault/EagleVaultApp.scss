@@ -928,3 +928,61 @@ body:has(.eaglevault) { touch-action: pan-y pinch-zoom; }
 @media (prefers-reduced-motion: reduce) {
     .eaglevault__mobile-navigation button { transition: none; }
 }
+
+/* Proton Pass native field components, adapted to EagleVault's dark shell. */
+.eaglevault__proton-editor {
+    width: 100%;
+    max-width: 100%;
+    gap: 20px;
+}
+.eaglevault__proton-editor .pass-fieldset-cluster {
+    background: #242133 !important;
+    border: 1px solid rgba(183, 175, 255, .22) !important;
+    border-radius: 15px;
+    overflow: hidden;
+}
+.eaglevault__proton-editor .pass-field-box {
+    padding: 13px 16px;
+    min-width: 0;
+}
+.eaglevault__proton-editor .pass-field-box + .pass-field-box {
+    border-top: 1px solid rgba(183, 175, 255, .13);
+}
+.eaglevault__proton-editor .pass-field-box .input,
+.eaglevault__proton-editor .pass-field-box input,
+.eaglevault__proton-editor .pass-field-box textarea {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    outline-offset: 2px;
+    font-size: 15px;
+}
+.eaglevault__proton-editor .pass-field-box input {
+    min-height: 39px;
+    padding-inline: 0;
+}
+.eaglevault__proton-editor .pass-field-box .pass-input--title {
+    font-size: 22px;
+    font-weight: 720;
+}
+.eaglevault__proton-editor .pass-field-box textarea {
+    min-height: 70px;
+    color: var(--ev-text);
+}
+.eaglevault__proton-folder {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    font-size: 14px;
+    font-weight: 650;
+}
+.eaglevault__proton-folder select {
+    min-height: 48px;
+    padding: 11px 13px;
+    border: 1px solid rgba(183, 175, 255, .22);
+    border-radius: 12px;
+    background: #242133;
+    color: #eeeafb;
+}
+.eaglevault__proton-editor .eaglevault__inline-actions { gap: 10px; flex-wrap: wrap; }
+.eaglevault__proton-editor .eaglevault__inline-actions button { min-height: 44px; }

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import '@proton/polyfill';
 import { initSafariFontFixClassnames } from '@proton/shared/lib/helpers/initSafariFontFixClassnames';
 
+import NotificationsProvider from '@proton/components/containers/notifications/Provider';
 import { EagleVaultApp } from './EagleVault/EagleVaultApp';
 import { isEagleVaultMode } from './EagleVault/mode';
 import './style';
@@ -14,7 +15,7 @@ const root = createRoot(container!);
 const eagleVaultMode = isEagleVaultMode(window.location.hostname, window.location.search);
 
 if (eagleVaultMode) {
-    root.render(<EagleVaultApp />);
+    root.render(<NotificationsProvider><EagleVaultApp /></NotificationsProvider>);
 } else {
     void import('@proton/pass/lib/file-storage/fs').then(({ fileStorageReady }) => {
         void fileStorageReady.then((instance) => {

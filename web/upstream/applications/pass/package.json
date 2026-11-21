@@ -31,6 +31,7 @@
         "@proton/styles": "workspace:^",
         "@proton/utils": "workspace:^",
         "@reduxjs/toolkit": "catalog:",
+        "formik": "catalog:",
         "history": "catalog:",
         "idb": "catalog:",
         "lodash": "catalog:",

@@ -20,6 +20,7 @@ import { IcUser } from '@proton/icons/icons/IcUser';
 import { IcPlus } from '@proton/icons/icons/IcPlus';
 
 import { presentEagleVaultLogin } from './ProtonItemAdapter';
+import { EagleVaultProtonLoginEditor, type EagleVaultLoginDraft } from './EagleVaultProtonLoginEditor';
 import { isEagleVaultStaging } from './mode';
 import './EagleVaultApp.scss';
 
@@ -309,8 +310,7 @@ export const EagleVaultApp = () => {
         }
     };
 
-    const saveItem = async (event: FormEvent<HTMLFormElement>) => {
-        event.preventDefault();
+    const saveItem = async (values: EagleVaultLoginDraft) => {
         const client = clientRef.current;
         const userKey = userKeyRef.current;
         const cryptoProvider = cryptoRef.current;
@@ -324,9 +324,9 @@ export const EagleVaultApp = () => {
                 'item',
                 itemId,
                 existing?.revision ?? 0,
-                cryptoProvider.encryptString(JSON.stringify({ type: 'login', ...draft }), userKey),
+                cryptoProvider.encryptString(JSON.stringify({ type: 'login', ...values }), userKey),
             );
-            const saved = { ...draft, id: itemId, revision };
+            const saved = { ...values, id: itemId, revision };
             const next = existing
                 ? itemsRef.current.map((item) => item.id === itemId ? saved : item)
                 : [...itemsRef.current, saved];
@@ -435,7 +435,7 @@ export const EagleVaultApp = () => {
                 if (output.length === 24) break;
             }
         }
-        setDraft((current) => ({ ...current, password: output }));
+        return output;
     };
 
     const copyPassword = async (password: string) => {
@@ -625,39 +625,20 @@ export const EagleVaultApp = () => {
                                         {selectedItem.notes && <p className="eaglevault__notes">{selectedItem.notes}</p>}
                                     </>
                                 ) : (
-                                    <form className="eaglevault__form" onSubmit={saveItem}>
-                                        <PanelHeader title={<h2>{editingId ? 'Edit login' : 'New login'}</h2>}
-                                            subtitle={<span className="eaglevault__muted">Encrypted login item</span>}/>
-
-                                        <label>Name<input required maxLength={256} value={draft.name}
-                                            onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))} /></label>
-                                        <label>Username<input autoComplete="username" value={draft.username}
-                                            onChange={(event) => setDraft((value) => ({ ...value, username: event.target.value }))} /></label>
-                                        <label>Website<input type="url" placeholder="https://" value={draft.website}
-                                            onChange={(event) => setDraft((value) => ({ ...value, website: event.target.value }))} /></label>
-                                        <label>Password
-                                            <span className="eaglevault__password-editor">
-                                                <input type="password" autoComplete="new-password" value={draft.password}
-                                                    onChange={(event) => setDraft((value) => ({ ...value, password: event.target.value }))} />
-                                                <button type="button" onClick={generatePassword}>Generate</button>
-                                            </span>
-                                        </label>
-                                        <label>Folder<select value={draft.folderId}
-                                            onChange={(event) => setDraft((value) => ({ ...value, folderId: event.target.value }))}>
-                                            <option value="">No folder</option>
-                                            {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-                                        </select></label>
-                                        <label>Notes<textarea rows={3} maxLength={4000} value={draft.notes}
-                                            onChange={(event) => setDraft((value) => ({ ...value, notes: event.target.value }))} /></label>
-                                        <div className="eaglevault__inline-actions">
-                                            <button className="eaglevault__button" type="submit" disabled={busy}>
-                                                {busy ? 'Saving…' : 'Save encrypted login'}
-                                            </button>
-                                            {editingId && <button type="button" onClick={() => {
-                                                setEditingId(null); setDraft(emptyDraft());
-                                            }}>Cancel</button>}
-                                        </div>
-                                    </form>
+                                    <EagleVaultProtonLoginEditor
+                                        key={editingId ?? 'create'}
+                                        initialValues={draft}
+                                        folderOptions={folders}
+                                        editing={Boolean(editingId)}
+                                        busy={busy}
+                                        onSave={saveItem}
+                                        onGeneratePassword={generatePassword}
+                                        onCancel={() => {
+                                            setEditingId(null);
+                                            setDraft(emptyDraft());
+                                            setMobileView('list');
+                                        }}
+                                    />
                                 )}
                             </section>
                         </div>
