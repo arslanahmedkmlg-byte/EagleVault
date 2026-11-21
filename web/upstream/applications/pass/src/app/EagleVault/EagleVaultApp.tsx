@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
+import { Provider, useDispatch, useSelector } from 'react-redux';
+
 import { EagleVaultClient } from 'eaglevault/api/eaglevault-client';
 import { loginToEagleVault, registerEagleVaultAccount } from 'eaglevault/auth/eaglevault-auth';
 import { BitwardenCryptoProvider } from 'eaglevault/crypto/bitwarden-crypto';
@@ -22,6 +24,7 @@ import { IcPlus } from '@proton/icons/icons/IcPlus';
 import { presentEagleVaultLogin } from './ProtonItemAdapter';
 import { EagleVaultProtonLoginEditor, type EagleVaultLoginDraft } from './EagleVaultProtonLoginEditor';
 import { isEagleVaultStaging } from './mode';
+import { createVaultNavigationStore, navigate, resetNavigation, type VaultNavigationStore } from './vaultNavigation';
 import './EagleVaultApp.scss';
 
 type LoginItem = {
@@ -41,7 +44,6 @@ type VaultFolder = {
     name: string;
 };
 
-type Screen = 'auth' | 'vault';
 type AuthMode = 'login' | 'register';
 
 const emptyDraft = (): Omit<LoginItem, 'id' | 'revision'> => ({
@@ -88,10 +90,11 @@ const wipeFolder = (folder: VaultFolder): void => {
     folder.name = '';
 };
 
-export const EagleVaultApp = () => {
-    const [settingsOpen, setSettingsOpen] = useState(false);
-    const [screen, setScreen] = useState<Screen>('auth');
-    const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
+const EagleVaultVault = () => {
+    const dispatch = useDispatch<VaultNavigationStore['dispatch']>();
+    const { settingsOpen, screen, mobileView, folderFilter, selectedId, editingId, showPassword } =
+        useSelector((state: ReturnType<VaultNavigationStore['getState']>) => state);
+
     const [authMode, setAuthMode] = useState<AuthMode>('login');
     const [email, setEmail] = useState('');
     const [masterPassword, setMasterPassword] = useState('');
@@ -100,11 +103,7 @@ export const EagleVaultApp = () => {
     const [items, setItems] = useState<LoginItem[]>([]);
     const [folders, setFolders] = useState<VaultFolder[]>([]);
     const [query, setQuery] = useState('');
-    const [folderFilter, setFolderFilter] = useState<string | null>(null);
-    const [selectedId, setSelectedId] = useState<string | null>(null);
     const [draft, setDraft] = useState(emptyDraft);
-    const [editingId, setEditingId] = useState<string | null>(null);
-    const [showPassword, setShowPassword] = useState(false);
     const [folderName, setFolderName] = useState('');
     const [notice, setNotice] = useState('');
     const [stagingAccessKey, setStagingAccessKey] = useState('');
@@ -147,15 +146,9 @@ export const EagleVaultApp = () => {
         clientRef.current?.clearSession();
         clientRef.current = null;
         replaceVault([], []);
-        setSelectedId(null);
-        setEditingId(null);
+        dispatch(resetNavigation());
         setDraft(emptyDraft());
-        setShowPassword(false);
         setQuery('');
-        setSettingsOpen(false);
-        setFolderFilter(null);
-        setMobileView('list');
-        setScreen('auth');
         if (lock) setAuthMode('login');
     };
 
@@ -222,8 +215,7 @@ export const EagleVaultApp = () => {
             userKeyRef.current = session.userKey;
             await loadVault(client, session.userKey);
             setEmail(session.email);
-            setScreen('vault');
-            setMobileView('list');
+            dispatch(navigate({ screen: 'vault', mobileView: 'list' }));
         } catch (cause) {
             userKeyRef.current?.fill(0);
             userKeyRef.current = null;
@@ -285,8 +277,7 @@ export const EagleVaultApp = () => {
             userKeyRef.current = protectedUnlock.userKey.slice();
             passkeyRef.current = protectedUnlock;
             setEmail(protectedUnlock.email);
-            setScreen('vault');
-            setMobileView('list');
+            dispatch(navigate({ screen: 'vault', mobileView: 'list' }));
             setAuthMode('login');
             setNotice('Vault unlocked using your device screen lock.');
         } catch (cause) {
@@ -336,8 +327,7 @@ export const EagleVaultApp = () => {
                 ? itemsRef.current.map((item) => item.id === itemId ? saved : item)
                 : [...itemsRef.current, saved];
             replaceVault(next, [...foldersRef.current]);
-            setSelectedId(itemId);
-            setEditingId(null);
+            dispatch(navigate({ selectedId: itemId, editingId: null }));
             setDraft(emptyDraft());
             setNotice(existing ? 'Login updated and synchronized.' : 'Login saved and synchronized.');
         } catch (cause) {
@@ -355,7 +345,7 @@ export const EagleVaultApp = () => {
         try {
             await client.deleteRecord('item', item.id, item.revision);
             replaceVault(itemsRef.current.filter((entry) => entry.id !== item.id), [...foldersRef.current]);
-            setSelectedId(null);
+            dispatch(navigate({ selectedId: null }));
             setNotice('Login deleted and synchronized.');
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : 'Unable to delete the encrypted login.');
@@ -456,12 +446,9 @@ export const EagleVaultApp = () => {
     const activeFolder = folders.find((folder) => folder.id === folderFilter);
     const activeFolderId = activeFolder?.id;
     const openFolder = (folderId: string | null) => {
-        setFolderFilter(folderId);
-        setSelectedId(null);
-        setEditingId(null);
-        setShowPassword(false);
+        dispatch(navigate({ folderFilter: folderId, selectedId: null, editingId: null, showPassword: false }));
         setDraft({ ...emptyDraft(), folderId: folderId ?? '' });
-        setMobileView('list');
+        dispatch(navigate({ mobileView: 'list' }));
     };
 
     const filteredItems = useMemo(() => {
@@ -478,20 +465,16 @@ export const EagleVaultApp = () => {
     const selectedItem = items.find((item) => item.id === selectedId);
 
     const openNewLogin = () => {
-        setSelectedId(null);
-        setEditingId(null);
-        setShowPassword(false);
+        dispatch(navigate({ selectedId: null, editingId: null, showPassword: false }));
         setDraft({ ...emptyDraft(), folderId: activeFolderId ?? '' });
-        setMobileView('detail');
+        dispatch(navigate({ mobileView: 'detail' }));
     };
 
     const editItem = (item: LoginItem) => {
         const { id: itemId, revision, ...values } = item;
         void revision;
         setDraft(values);
-        setEditingId(itemId);
-        setSelectedId(itemId);
-        setShowPassword(false);
+        dispatch(navigate({ editingId: itemId, selectedId: itemId, showPassword: false }));
     };
 
     const lock = () => {
@@ -530,7 +513,7 @@ export const EagleVaultApp = () => {
                             <div className="eaglevault__header-actions">
                                 <Button type="button" size="small" shape="ghost"
                                     aria-expanded={settingsOpen} aria-controls="vault-settings"
-                                    onClick={() => setSettingsOpen((open) => !open)}>
+                                    onClick={() => dispatch(navigate({ settingsOpen: !settingsOpen }))}>
                                     Settings
                                 </Button>
                                 <Button type="button" size="small" shape="ghost" onClick={syncVault} disabled={busy}>Sync</Button>
@@ -554,9 +537,9 @@ export const EagleVaultApp = () => {
                         </section>
                         <div className="eaglevault__mobile-navigation" role="navigation" aria-label="Vault navigation">
                             <button type="button" className={mobileView === 'list' ? 'is-active' : ''}
-                                onClick={() => setMobileView('list')}>{activeFolder?.name ?? 'All items'}</button>
+                                onClick={() => dispatch(navigate({ mobileView: 'list' }))}>{activeFolder?.name ?? 'All items'}</button>
                             <button type="button" className={mobileView === 'detail' ? 'is-active' : ''}
-                                onClick={() => setMobileView('detail')}>{editingId ? 'Edit login' : selectedItem ? 'Details' : 'New login'}</button>
+                                onClick={() => dispatch(navigate({ mobileView: 'detail' }))}>{editingId ? 'Edit login' : selectedItem ? 'Details' : 'New login'}</button>
                         </div>
                         <div className={'eaglevault__workspace eaglevault__workspace--' + mobileView}>
                             <nav className="eaglevault__primary-sidebar" aria-label="Vault sections">
@@ -604,7 +587,7 @@ export const EagleVaultApp = () => {
                                                 type="button"
                                                 shape="ghost"
                                                 color="weak"
-                                                onClick={() => { setSelectedId(item.id); setEditingId(null); setShowPassword(false); setMobileView('detail'); }}
+                                                onClick={() => { dispatch(navigate({ selectedId: item.id, editingId: null, showPassword: false, mobileView: 'detail' })); }}
                                             >
                                                 <IconBox mode="icon" pill size={5} className="eaglevault__login-icon">
                                                     <IcUser size={4}/>
@@ -658,7 +641,7 @@ export const EagleVaultApp = () => {
                                             <label htmlFor="stored-password">Password</label>
                                             <input id="stored-password" type={showPassword ? 'text' : 'password'}
                                                 value={selectedItem.password} readOnly autoComplete="off" />
-                                            <button type="button" onClick={() => setShowPassword((value) => !value)}>
+                                            <button type="button" onClick={() => dispatch(navigate({ showPassword: !showPassword }))}>
                                                 {showPassword ? 'Hide' : 'Reveal'}
                                             </button>
                                             <button type="button" onClick={() => copyPassword(selectedItem.password)}>Copy</button>
@@ -675,9 +658,9 @@ export const EagleVaultApp = () => {
                                         onSave={saveItem}
                                         onGeneratePassword={generatePassword}
                                         onCancel={() => {
-                                            setEditingId(null);
+                                            dispatch(navigate({ editingId: null }));
                                             setDraft(emptyDraft());
-                                            setMobileView('list');
+                                            dispatch(navigate({ mobileView: 'list' }));
                                         }}
                                     />
                                 )}
@@ -733,5 +716,14 @@ export const EagleVaultApp = () => {
                 )}
             </section>
         </main>
+    );
+};
+
+export const EagleVaultApp = () => {
+    const [store] = useState(createVaultNavigationStore);
+    return (
+        <Provider store={store}>
+            <EagleVaultVault />
+        </Provider>
     );
 };
