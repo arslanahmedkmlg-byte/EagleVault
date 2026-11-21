@@ -99,6 +99,7 @@ export const EagleVaultApp = () => {
     const [items, setItems] = useState<LoginItem[]>([]);
     const [folders, setFolders] = useState<VaultFolder[]>([]);
     const [query, setQuery] = useState('');
+    const [folderFilter, setFolderFilter] = useState<string | null>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [draft, setDraft] = useState(emptyDraft);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -447,13 +448,24 @@ export const EagleVaultApp = () => {
         }
     };
 
+    const activeFolder = folders.find((folder) => folder.id === folderFilter);
+    const activeFolderId = activeFolder?.id;
+    const openFolder = (folderId: string | null) => {
+        setFolderFilter(folderId);
+        setSelectedId(null);
+        setEditingId(null);
+        setShowPassword(false);
+        setDraft({ ...emptyDraft(), folderId: folderId ?? '' });
+        setMobileView('list');
+    };
+
     const filteredItems = useMemo(() => {
         const normalized = query.trim().toLowerCase();
-        if (!normalized) return items;
         return items.filter((item) =>
-            [item.name, item.username, item.website].some((value) => value.toLowerCase().includes(normalized)),
+            (!activeFolderId || item.folderId === activeFolderId) &&
+            (!normalized || [item.name, item.username, item.website].some((value) => value.toLowerCase().includes(normalized))),
         );
-    }, [items, query]);
+    }, [activeFolderId, items, query]);
     // The original Proton Pass presenter supplies list titles and usernames.
     const protonListRows = useMemo(() =>
         filteredItems.map((item) => ({ item, presentation: presentEagleVaultLogin(item) })),
@@ -526,33 +538,43 @@ export const EagleVaultApp = () => {
                         </div>
                         <div className="eaglevault__mobile-navigation" role="navigation" aria-label="Vault navigation">
                             <button type="button" className={mobileView === 'list' ? 'is-active' : ''}
-                                onClick={() => setMobileView('list')}>All items</button>
+                                onClick={() => setMobileView('list')}>{activeFolder?.name ?? 'All items'}</button>
                             <button type="button" className={mobileView === 'detail' ? 'is-active' : ''}
                                 onClick={() => setMobileView('detail')}>{editingId ? 'Edit login' : selectedItem ? 'Details' : 'New login'}</button>
                         </div>
                         <div className={'eaglevault__workspace eaglevault__workspace--' + mobileView}>
                             <nav className="eaglevault__primary-sidebar" aria-label="Vault sections">
                                 <div className="eaglevault__sidebar-label">YOUR VAULT</div>
-                                <button type="button" className="is-active" onClick={() => setMobileView('list')}>
+                                <button type="button" className={activeFolderId ? undefined : 'is-active'}
+                                    aria-current={activeFolderId ? undefined : 'page'} onClick={() => openFolder(null)}>
                                     <IcUser size={4} /> All items <span>{items.length}</span>
                                 </button>
                                 <div className="eaglevault__sidebar-label">ORGANIZE</div>
-                                <button type="button" onClick={() => setMobileView('list')}>
-                                    <PassFolderIcon size={4}/> Folders <span>{folders.length}</span>
-                                </button>
+                                {folders.map((folder) => (
+                                    <button key={folder.id} type="button" onClick={() => openFolder(folder.id)}
+                                        className={activeFolderId === folder.id ? 'is-active' : undefined}
+                                        aria-current={activeFolderId === folder.id ? 'page' : undefined}>
+                                        <PassFolderIcon size={4}/> {folder.name}
+                                    </button>
+                                ))}
                                 <button type="button" className="eaglevault__sidebar-create"
-                                    onClick={() => { setSelectedId(null); setEditingId(null); setDraft(emptyDraft()); setMobileView('detail'); }}>
+                                    onClick={() => { setSelectedId(null); setEditingId(null); setDraft({ ...emptyDraft(), folderId: activeFolderId ?? '' }); setMobileView('detail'); }}>
                                     <IcPlus size={4}/> New login
                                 </button>
                             </nav>
                             <section className="eaglevault__vault-list">
+                                {activeFolder && (
+                                    <Button type="button" size="small" shape="ghost" onClick={() => openFolder(null)}>
+                                        All items
+                                    </Button>
+                                )}
                                 <label className="eaglevault__search">
                                     <span className="eaglevault__visually-hidden">Search logins</span>
                                     <input type="search" placeholder="Search logins" value={query}
                                         onChange={(event) => setQuery(event.target.value)} />
                                 </label>
                                 <button type="button" className="eaglevault__secondary-button"
-                                    onClick={() => { setSelectedId(null); setEditingId(null); setDraft(emptyDraft()); setMobileView('detail'); }}>
+                                    onClick={() => { setSelectedId(null); setEditingId(null); setDraft({ ...emptyDraft(), folderId: activeFolderId ?? '' }); setMobileView('detail'); }}>
                                     <IcPlus size={4}/> Add login
                                 </button>
                                 <div className="eaglevault__items" aria-label="Vault logins">
@@ -588,7 +610,10 @@ export const EagleVaultApp = () => {
                                 <ul className="eaglevault__folder-list" aria-label="Vault folders">
                                     {folders.map((folder) => (
                                         <li key={folder.id}>
-                                            <span className="eaglevault__folder-name"><PassFolderIcon size={4}/>{folder.name}</span>
+                                            <button type="button" className="eaglevault__folder-name"
+                                                aria-pressed={activeFolderId === folder.id} onClick={() => openFolder(folder.id)}>
+                                                <PassFolderIcon size={4}/>{folder.name}
+                                            </button>
                                             <button type="button" onClick={() => deleteFolder(folder)} disabled={busy}
                                                 aria-label={`Delete ${folder.name} folder`}>Delete</button>
                                         </li>
