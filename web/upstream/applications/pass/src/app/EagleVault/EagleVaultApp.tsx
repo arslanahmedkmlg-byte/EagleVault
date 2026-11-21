@@ -12,6 +12,8 @@ import {
 
 import { PassFolderIcon } from '../../../../../packages/pass/components/Folders/PassFolderIcon';
 import { IconBox } from '../../../../../packages/pass/components/Layout/Icon/IconBox';
+import { SubHeader } from '../../../../../packages/pass/components/Layout/Section/SubHeader';
+import { Button } from '@proton/atoms/Button/Button';
 import { IcUser } from '@proton/icons/icons/IcUser';
 import { IcPlus } from '@proton/icons/icons/IcPlus';
 
@@ -498,10 +500,9 @@ export const EagleVaultApp = () => {
                 {screen === 'vault' ? (
                     <>
                         <div className="eaglevault__vault-header">
-                            <div>
+                            <div className="eaglevault__header-heading">
                                 <span className="eaglevault__status" role="status">Vault unlocked</span>
-                                <h1>Your vault</h1>
-                                <p className="eaglevault__muted">{email} · EagleVault Core</p>
+                                <SubHeader title="Your vault" description={<span className="eaglevault__muted">{email} · EagleVault Core</span>} />
                             </div>
                             <div className="eaglevault__header-actions">
                                 {localPasskey?.email === email.toLowerCase() && passkeyRef.current
@@ -511,9 +512,9 @@ export const EagleVaultApp = () => {
                                     : <button type="button" onClick={enableDeviceUnlock} disabled={busy}>
                                         Enable device unlock
                                     </button>}
-                                <button type="button" onClick={syncVault} disabled={busy}>Sync</button>
-                                <button type="button" onClick={lock} disabled={busy}>Lock</button>
-                                <button type="button" onClick={logout} disabled={busy}>Log out</button>
+                                <Button type="button" size="small" shape="ghost" onClick={syncVault} disabled={busy}>Sync</Button>
+                                <Button type="button" size="small" shape="ghost" onClick={lock} disabled={busy}>Lock</Button>
+                                <Button type="button" size="small" shape="ghost" onClick={logout} disabled={busy}>Log out</Button>
                             </div>
                         </div>
                         <div className="eaglevault__mobile-navigation" role="navigation" aria-label="Vault navigation">
