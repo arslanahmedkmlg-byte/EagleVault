@@ -13,10 +13,13 @@ import {
 import { PassFolderIcon } from '../../../../../packages/pass/components/Folders/PassFolderIcon';
 import { IconBox } from '../../../../../packages/pass/components/Layout/Icon/IconBox';
 import { SubHeader } from '../../../../../packages/pass/components/Layout/Section/SubHeader';
+import { PanelHeader } from '../../../../../packages/pass/components/Layout/Panel/PanelHeader';
+import { ButtonLike } from '@proton/atoms/Button/ButtonLike';
 import { Button } from '@proton/atoms/Button/Button';
 import { IcUser } from '@proton/icons/icons/IcUser';
 import { IcPlus } from '@proton/icons/icons/IcPlus';
 
+import { presentEagleVaultLogin } from './ProtonItemAdapter';
 import { isEagleVaultStaging } from './mode';
 import './EagleVaultApp.scss';
 
@@ -451,6 +454,10 @@ export const EagleVaultApp = () => {
             [item.name, item.username, item.website].some((value) => value.toLowerCase().includes(normalized)),
         );
     }, [items, query]);
+    // The original Proton Pass presenter supplies list titles and usernames.
+    const protonListRows = useMemo(() =>
+        filteredItems.map((item) => ({ item, presentation: presentEagleVaultLogin(item) })),
+    [filteredItems]);
     const selectedItem = items.find((item) => item.id === selectedId);
 
     const editItem = (item: LoginItem) => {
@@ -551,20 +558,23 @@ export const EagleVaultApp = () => {
                                 <div className="eaglevault__items" aria-label="Vault logins">
                                     {filteredItems.length === 0
                                         ? <p className="eaglevault__muted">No matching logins.</p>
-                                        : filteredItems.map((item) => (
-                                            <button
+                                        : protonListRows.map(({ item, presentation }) => (
+                                            <ButtonLike
+                                                as="button"
                                                 className={'eaglevault__item' + (selectedId === item.id ? ' is-selected' : '')}
                                                 key={item.id}
                                                 type="button"
+                                                shape="ghost"
+                                                color="weak"
                                                 onClick={() => { setSelectedId(item.id); setEditingId(null); setShowPassword(false); setMobileView('detail'); }}
                                             >
                                                 <IconBox mode="icon" pill size={5} className="eaglevault__login-icon">
                                                     <IcUser size={4}/>
                                                 </IconBox>
-                                                <span className="eaglevault__item-title">{item.name || 'Untitled login'}</span>
-                                                <span className="eaglevault__item-subtitle">{item.username || item.website}</span>
+                                                <span className="eaglevault__item-title">{presentation.heading || 'Untitled login'}</span>
+                                                <span className="eaglevault__item-subtitle">{presentation.subheading || item.website}</span>
                                                 <span className="eaglevault__item-type">Login</span>
-                                            </button>
+                                            </ButtonLike>
                                         ))}
                                 </div>
                                 <form className="eaglevault__folder-form" onSubmit={saveFolder}>
@@ -590,14 +600,16 @@ export const EagleVaultApp = () => {
                                 {selectedItem && !editingId ? (
                                     <>
                                         <div className="eaglevault__details-heading">
-                                            <div>
-                                                <span className="eaglevault__muted">Login</span>
-                                                <h2>{selectedItem.name || 'Untitled login'}</h2>
-                                            </div>
-                                            <div className="eaglevault__inline-actions">
-                                                <button type="button" onClick={() => editItem(selectedItem)}>Edit</button>
-                                                <button type="button" onClick={() => deleteItem(selectedItem)} disabled={busy}>Delete</button>
-                                            </div>
+                                            <PanelHeader
+                                                title={<h2>{selectedItem.name || 'Untitled login'}</h2>}
+                                                subtitle={<span className="eaglevault__muted">Login</span>}
+                                                actions={[
+                                                    <Button key="edit" type="button" size="small" shape="solid"
+                                                        onClick={() => editItem(selectedItem)}>Edit</Button>,
+                                                    <Button key="delete" type="button" size="small" shape="ghost"
+                                                        disabled={busy} onClick={() => deleteItem(selectedItem)}>Delete</Button>,
+                                                ]}
+                                            />
                                         </div>
                                         <div className="eaglevault__detail-row"><span>Username</span><strong>{selectedItem.username || '—'}</strong></div>
                                         <div className="eaglevault__detail-row"><span>Website</span><strong>{selectedItem.website || '—'}</strong></div>
@@ -614,7 +626,9 @@ export const EagleVaultApp = () => {
                                     </>
                                 ) : (
                                     <form className="eaglevault__form" onSubmit={saveItem}>
-                                        <h2>{editingId ? 'Edit login' : 'New login'}</h2>
+                                        <PanelHeader title={<h2>{editingId ? 'Edit login' : 'New login'}</h2>}
+                                            subtitle={<span className="eaglevault__muted">Encrypted login item</span>}/>
+
                                         <label>Name<input required maxLength={256} value={draft.name}
                                             onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))} /></label>
                                         <label>Username<input autoComplete="username" value={draft.username}
