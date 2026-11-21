@@ -421,7 +421,8 @@ export const EagleVaultApp = () => {
                 removePasskeyUnlock();
                 setLocalPasskey(null);
             }
-            clearSession();
+            clearSession(true);
+            setNotice('');
             setStagingAccessKey('');
             setBusy(false);
         }
