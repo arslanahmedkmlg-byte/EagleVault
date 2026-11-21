@@ -151,6 +151,8 @@ export const EagleVaultApp = () => {
         setDraft(emptyDraft());
         setShowPassword(false);
         setQuery('');
+        setFolderFilter(null);
+        setMobileView('list');
         setScreen('auth');
         if (lock) setAuthMode('login');
     };
@@ -472,6 +474,14 @@ export const EagleVaultApp = () => {
     [filteredItems]);
     const selectedItem = items.find((item) => item.id === selectedId);
 
+    const openNewLogin = () => {
+        setSelectedId(null);
+        setEditingId(null);
+        setShowPassword(false);
+        setDraft({ ...emptyDraft(), folderId: activeFolderId ?? '' });
+        setMobileView('detail');
+    };
+
     const editItem = (item: LoginItem) => {
         const { id: itemId, revision, ...values } = item;
         void revision;
@@ -488,16 +498,7 @@ export const EagleVaultApp = () => {
             } catch (cause) {
                 setError(cause instanceof Error ? cause.message : 'The session could not be revoked.');
             } finally {
-                passkeyRef.current?.userKey.fill(0);
-                passkeyRef.current = null;
-                userKeyRef.current?.fill(0);
-                userKeyRef.current = null;
-                clientRef.current?.clearSession();
-                clientRef.current = null;
-                replaceVault([], []);
-                setSelectedId(null);
-                setScreen('auth');
-                setAuthMode('login');
+                clearSession(true);
                 setStagingAccessKey('');
                 setNotice(localPasskey ? 'Vault locked. Use your device screen lock or master password.' :
                     'Vault locked. Sign in again to unlock it.');
@@ -558,7 +559,7 @@ export const EagleVaultApp = () => {
                                     </button>
                                 ))}
                                 <button type="button" className="eaglevault__sidebar-create"
-                                    onClick={() => { setSelectedId(null); setEditingId(null); setDraft({ ...emptyDraft(), folderId: activeFolderId ?? '' }); setMobileView('detail'); }}>
+                                    onClick={openNewLogin}>
                                     <IcPlus size={4}/> New login
                                 </button>
                             </nav>
@@ -574,7 +575,7 @@ export const EagleVaultApp = () => {
                                         onChange={(event) => setQuery(event.target.value)} />
                                 </label>
                                 <button type="button" className="eaglevault__secondary-button"
-                                    onClick={() => { setSelectedId(null); setEditingId(null); setDraft({ ...emptyDraft(), folderId: activeFolderId ?? '' }); setMobileView('detail'); }}>
+                                    onClick={openNewLogin}>
                                     <IcPlus size={4}/> Add login
                                 </button>
                                 <div className="eaglevault__items" aria-label="Vault logins">
