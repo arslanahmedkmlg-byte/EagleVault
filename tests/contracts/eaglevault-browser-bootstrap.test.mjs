@@ -10,7 +10,7 @@ test("EagleVault hostname renders a direct app shell before Proton app modules l
   const index = await readFile(indexPath, "utf8");
   assert.match(index, /isEagleVaultMode\(window\.location\.hostname, window\.location\.search\)/);
   assert.match(index, /if \(eagleVaultMode\)/);
-  assert.match(index, /root\.render\(<EagleVaultApp \/>\)/);
+  assert.match(index, /root\.render\(\s*<NotificationsProvider>\s*<EagleVaultApp \/>\s*<\/NotificationsProvider>\s*\)/);
   assert.match(index, /import\('\.\/App'\)/);
 });
 
