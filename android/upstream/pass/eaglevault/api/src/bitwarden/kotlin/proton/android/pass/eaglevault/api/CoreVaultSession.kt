@@ -72,7 +72,9 @@ class CoreVaultSession internal constructor(private val api: EagleVaultApi) {
             // with an unreadable private-key field and still initializes their symmetric user key.
             sdk.crypto().use { crypto ->
                 crypto.initializeUserCrypto(InitUserCryptoRequest(
-                    userId = null,
+                    // The SDK requires an ID for its in-memory local-data key. Core does
+                    // not expose account identifiers, and this SDK instance has no disk state.
+                    userId = UUID.randomUUID().toString(),
                     kdfParams = kdf,
                     email = account,
                     accountCryptographicState = WrappedAccountCryptographicState.V1(privateKey ?: wrapped),
