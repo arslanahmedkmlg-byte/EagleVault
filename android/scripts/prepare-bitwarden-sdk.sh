@@ -19,9 +19,7 @@ mkdir -p "$archives"
 while read -r target abi artifact checksum; do
     zip="$archives/android-$target.zip"
     if [[ ! -f "$zip" ]]; then
-        curl --fail --silent --show-error --location --retry 3 --max-time 180 \
-            "https://api.github.com/repos/bitwarden/sdk-internal/actions/artifacts/$artifact/zip" \
-            --output "$zip.part"
+        gh api "repos/bitwarden/sdk-internal/actions/artifacts/$artifact/zip" > "$zip.part"
         mv "$zip.part" "$zip"
     fi
     printf '%s  %s\n' "$checksum" "$zip" | sha256sum --check

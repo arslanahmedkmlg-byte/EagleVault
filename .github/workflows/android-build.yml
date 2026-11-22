@@ -36,6 +36,8 @@ jobs:
         run: rustup toolchain install 1.99.0 --profile minimal
 
       - name: Verify native SDK archives and generate Kotlin bindings
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           bash android/scripts/prepare-bitwarden-sdk.sh \
             .ci/bitwarden-sdk "$RUNNER_TEMP/bitwarden-zips" "$RUNNER_TEMP/bitwarden-sdk"
