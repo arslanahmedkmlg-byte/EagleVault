@@ -50,6 +50,7 @@ val atlasProxyToken: String? = privateProperties.getProperty("PROXY_TOKEN")
 val metaAppId: String? = privateProperties.getProperty("META_APP_ID")
 val customEnvUrl: String? = System.getenv("PROD_ENV_URL")
 val isCustomBuild: Boolean = !customEnvUrl.isNullOrBlank()
+val isEagleVaultCore = providers.gradleProperty("eagleVaultBitwardenSdkDir").isPresent
 val isApkBuild: Boolean = project.findProperty("apkBuild") == "true"
 val disableSentryUpload: Boolean = project.findProperty("disableSentryUpload") == "true"
 val isCucumberRun: Boolean = project.findProperty("cucumber") == "true"
@@ -89,8 +90,7 @@ android {
     namespace = "proton.android.pass"
 
     defaultConfig {
-        buildConfigField("boolean", "EAGLEVAULT_CORE", providers.gradleProperty("eagleVaultBitwardenSdkDir").isPresent.toString())
-        applicationId = "proton.android.pass"
+        applicationId = if (isEagleVaultCore) "asia.eaglenet.eaglevault" else "proton.android.pass"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = appVersionCode
@@ -239,8 +239,11 @@ android {
     }
 
     sourceSets {
-        if (providers.gradleProperty("eagleVaultBitwardenSdkDir").isPresent) {
-            getByName("main").java.srcDir("src/eaglevault/kotlin")
+        if (isEagleVaultCore) {
+            getByName("main").apply {
+                java.srcDir("src/eaglevault/kotlin")
+                manifest.srcFile("src/eaglevault/AndroidManifest.xml")
+            }
         }
         getByName("main").java.srcDirs("src/main/kotlin")
         getByName("test").java.srcDirs("src/test/kotlin")
@@ -462,7 +465,7 @@ dependencies {
     implementation(projects.pass.data.api)
     implementation(projects.pass.data.impl)
     implementation(projects.pass.domain)
-    if (providers.gradleProperty("eagleVaultBitwardenSdkDir").isPresent) {
+    if (isEagleVaultCore) {
         implementation(project(":pass:eaglevault:api"))
     }
     implementation(projects.pass.image.api)

@@ -28,3 +28,20 @@ certificate=$(openssl x509 -in "$scratch/cert.pem" -outform DER | base64 -w0)
         -Pandroid.testInstrumentationRunnerArguments.coreTestCertificate="$certificate"
 )
 curl --fail --silent --show-error --cacert "$scratch/cert.pem" https://localhost:18443/verify-android-fixture
+
+shopt -s nullglob
+apks=(android/upstream/app/build/outputs/apk/devProd/debug/*.apk)
+test "${#apks[@]}" -eq 1
+package=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "${apks[0]}" |
+    sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+test -n "$package"
+adb install "${apks[0]}"
+adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER \
+    -n "$package/proton.android.pass.ui.CoreVaultActivity"
+for attempt in {1..10}; do
+    adb shell uiautomator dump /sdcard/eaglevault-screen.xml >/dev/null
+    if adb shell cat /sdcard/eaglevault-screen.xml | grep -q 'Master password'; then exit 0; fi
+    sleep 1
+done
+echo "EagleVault unlock screen did not appear." >&2
+exit 1

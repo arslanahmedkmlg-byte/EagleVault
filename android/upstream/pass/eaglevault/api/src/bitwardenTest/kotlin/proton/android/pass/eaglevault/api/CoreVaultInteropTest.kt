@@ -6,6 +6,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 import retrofit2.Retrofit
@@ -43,10 +44,28 @@ class CoreVaultInteropTest {
             assertEquals("From Web", seeded.name)
             assertEquals("Web fixture secret", seeded.password)
             vault.save(seeded.copy(name = "Edited by Android"))
+            try {
+                vault.save(seeded.copy(name = "Stale Android edit"))
+                fail("Stale update should have failed")
+            } catch (error: CoreVaultSession.RequestFailed) {
+                assertEquals(409, error.status)
+            }
+            vault.save(CoreVaultSession.Record(kind = "folder", name = "Temporary folder"))
+            vault.delete(vault.sync().single { it.name == "Temporary folder" })
             vault.save(CoreVaultSession.Record(kind = "note", name = "From Android", notes = "Android fixture secret"))
             assertEquals(setOf("Edited by Android", "From Android"), vault.sync().map { it.name }.toSet())
         } finally {
             vault.lock()
+        }
+
+        val androidRegistration = CoreVaultSession(api)
+        androidRegistration.unlock(
+            "android-registration@example.test", "Synthetic Android registration password", "synthetic-interop-invite",
+        )
+        try {
+            androidRegistration.save(CoreVaultSession.Record(kind = "note", name = "Android account", notes = "Registration fixture"))
+        } finally {
+            androidRegistration.lock()
         }
     }
 }

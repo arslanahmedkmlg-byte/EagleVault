@@ -20,7 +20,6 @@ package proton.android.pass.ui
 
 import android.content.ComponentName
 import android.content.Intent
-import proton.android.pass.BuildConfig
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResult
@@ -109,11 +108,6 @@ class MainActivity : FragmentActivity(), ProductMetricsDelegateOwner {
         setSecureMode()
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
-        if (BuildConfig.EAGLEVAULT_CORE) {
-            startActivity(Intent().setClassName(this, "proton.android.pass.ui.CoreVaultActivity"))
-            finish()
-            return
-        }
 
         deeplinkManager.onActivityCreate(this, savedInstanceState)
         enableEdgeToEdgeProtonPass()

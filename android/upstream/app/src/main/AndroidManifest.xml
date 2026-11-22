@@ -129,8 +129,6 @@
                 android:resource="@xml/filepaths" />
         </provider>
 
-        <activity android:name=".ui.CoreVaultActivity" android:exported="false" />
-
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"

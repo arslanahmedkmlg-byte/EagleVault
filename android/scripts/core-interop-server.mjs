@@ -39,6 +39,10 @@ const server = createServer({
       assert.equal(items.length, 2);
       assert.equal(items.find(item => item.name === 'Edited by Android')?.password, 'Web fixture secret');
       assert.equal(items.find(item => item.name === 'From Android')?.notes, 'Android fixture secret');
+      const androidAccount = new EagleVaultSession(origin, (url, init) => runtime.dispatchFetch(url, init));
+      await androidAccount.unlock('android-registration@example.test', 'Synthetic Android registration password');
+      assert.equal((await androidAccount.sync())[0]?.notes, 'Registration fixture');
+      await androidAccount.lock();
       response.end('Android and Web decrypted each other’s records.');
       return;
     }
