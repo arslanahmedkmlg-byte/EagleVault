@@ -14,7 +14,7 @@ android {
         val native = sdk.resolve("jniLibs")
         require(kotlin.isDirectory && native.isDirectory) { "Run prepare-bitwarden-sdk.sh first." }
         sourceSets.getByName("main") {
-            java.srcDir(kotlin)
+            java.srcDirs(kotlin, "src/bitwarden/kotlin")
             jniLibs.srcDir(native)
         }
     }

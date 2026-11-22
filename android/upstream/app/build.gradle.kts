@@ -89,6 +89,7 @@ android {
     namespace = "proton.android.pass"
 
     defaultConfig {
+        buildConfigField("boolean", "EAGLEVAULT_CORE", providers.gradleProperty("eagleVaultBitwardenSdkDir").isPresent.toString())
         applicationId = "proton.android.pass"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
@@ -238,6 +239,9 @@ android {
     }
 
     sourceSets {
+        if (providers.gradleProperty("eagleVaultBitwardenSdkDir").isPresent) {
+            getByName("main").java.srcDir("src/eaglevault/kotlin")
+        }
         getByName("main").java.srcDirs("src/main/kotlin")
         getByName("test").java.srcDirs("src/test/kotlin")
         getByName("androidTest").java.srcDirs("src/androidTest/kotlin")
