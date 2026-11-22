@@ -30,21 +30,24 @@ object VaultwardenApiFactory {
             "HTTPS is required except for localhost development."
         }
 
-        val client = OkHttpClient.Builder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .build()
-
-        return Retrofit.Builder()
-            .baseUrl(parsed)
-            .client(client)
-            .build()
-            .create(VaultwardenApi::class.java)
+        return vaultRetrofit(parsed).create(VaultwardenApi::class.java)
     }
 
     private fun HttpUrl.isLoopbackDevelopmentHost(): Boolean =
         scheme == "http" && (host == "localhost" || host == "127.0.0.1" || host == "::1")
+}
+
+internal fun vaultRetrofit(origin: HttpUrl): Retrofit {
+    val client = OkHttpClient.Builder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    return Retrofit.Builder()
+        .baseUrl(origin)
+        .client(client)
+        .build()
 }

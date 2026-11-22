@@ -217,6 +217,7 @@ class CoreVaultActivity : ComponentActivity() {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: CoreVaultSession.RequestFailed) {
+                if (failure.status == 401 && unlocked) lock()
                 error = when (failure.status) {
                     401 -> "Credentials or session rejected."
                     409 -> "The record or account already changed. Sync and try again."

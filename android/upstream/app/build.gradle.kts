@@ -254,7 +254,7 @@ android {
         listOf("dev", "alpha", "play").forEach {
             getByName(it).apply {
                 java.srcDirs("src/gms/kotlin")
-                manifest.srcFile("src/gms/AndroidManifest.xml")
+                if (!isEagleVaultCore) manifest.srcFile("src/gms/AndroidManifest.xml")
             }
         }
         listOf("testDev", "testAlpha", "testPlay").forEach {
