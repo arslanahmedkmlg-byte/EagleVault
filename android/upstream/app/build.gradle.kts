@@ -458,6 +458,9 @@ dependencies {
     implementation(projects.pass.data.api)
     implementation(projects.pass.data.impl)
     implementation(projects.pass.domain)
+    if (providers.gradleProperty("eagleVaultBitwardenSdkDir").isPresent) {
+        implementation(project(":pass:eaglevault:api"))
+    }
     implementation(projects.pass.image.api)
     implementation(projects.pass.image.impl)
 
