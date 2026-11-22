@@ -105,6 +105,7 @@ const EagleVaultVault = () => {
     const [query, setQuery] = useState('');
     const [draft, setDraft] = useState(emptyDraft);
     const [folderName, setFolderName] = useState('');
+    const [renamingFolder, setRenamingFolder] = useState<Pick<VaultFolder, 'id' | 'revision'> | null>(null);
     const [notice, setNotice] = useState('');
     const [stagingAccessKey, setStagingAccessKey] = useState('');
     const [localPasskey, setLocalPasskey] = useState(existingPasskeyUnlock);
@@ -113,6 +114,7 @@ const EagleVaultVault = () => {
     const clientRef = useRef<EagleVaultClient | null>(null);
     const userKeyRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
     const cryptoRef = useRef<BitwardenCryptoProvider | null>(null);
+    const editRevisionRef = useRef<number>(0);
     const itemsRef = useRef<LoginItem[]>([]);
     const foldersRef = useRef<VaultFolder[]>([]);
 
@@ -149,6 +151,8 @@ const EagleVaultVault = () => {
         dispatch(resetNavigation());
         setDraft(emptyDraft());
         setQuery('');
+        setFolderName('');
+        setRenamingFolder(null);
         if (lock) setAuthMode('login');
     };
 
@@ -315,11 +319,12 @@ const EagleVaultVault = () => {
         setError('');
         try {
             const existing = editingId ? itemsRef.current.find((item) => item.id === editingId) : undefined;
+            if (editingId && !existing) throw new Error('This login was deleted. Close the editor and synchronize the vault.');
             const itemId = existing?.id ?? id();
             const revision = await client.writeRecord(
                 'item',
                 itemId,
-                existing?.revision ?? 0,
+                existing ? editRevisionRef.current : 0,
                 cryptoProvider.encryptString(JSON.stringify({ type: 'login', ...values }), userKey),
             );
             const saved = { ...values, id: itemId, revision };
@@ -339,7 +344,7 @@ const EagleVaultVault = () => {
 
     const deleteItem = async (item: LoginItem) => {
         const client = clientRef.current;
-        if (!client) return;
+        if (!client || !window.confirm('Delete this login from your vault?')) return;
         setBusy(true);
         setError('');
         try {
@@ -364,18 +369,23 @@ const EagleVaultVault = () => {
         setBusy(true);
         setError('');
         try {
-            const folderId = id();
+            const folderId = renamingFolder?.id ?? id();
             const revision = await client.writeRecord(
                 'folder',
                 folderId,
-                0,
+                renamingFolder?.revision ?? 0,
                 cryptoProvider.encryptString(JSON.stringify({ name }), userKey),
             );
-            replaceVault([...itemsRef.current], [...foldersRef.current, { id: folderId, revision, name }]);
+            const saved = { id: folderId, revision, name };
+            const nextFolders = renamingFolder
+                ? foldersRef.current.map((folder) => folder.id === folderId ? saved : folder)
+                : [...foldersRef.current, saved];
+            replaceVault([...itemsRef.current], nextFolders);
             setFolderName('');
-            setNotice('Folder created and synchronized.');
+            setRenamingFolder(null);
+            setNotice(renamingFolder ? 'Folder renamed and synchronized.' : 'Folder created and synchronized.');
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : 'Unable to create the encrypted folder.');
+            setError(cause instanceof Error ? cause.message : 'Unable to save the encrypted folder.');
         } finally {
             setBusy(false);
         }
@@ -388,11 +398,17 @@ const EagleVaultVault = () => {
             setError('Move or edit this folder’s logins before deleting the folder.');
             return;
         }
+        if (!window.confirm('Delete this empty folder?')) return;
         setBusy(true);
         setError('');
         try {
             await client.deleteRecord('folder', folder.id, folder.revision);
             replaceVault([...itemsRef.current], foldersRef.current.filter((entry) => entry.id !== folder.id));
+            if (folderFilter === folder.id) dispatch(navigate({ folderFilter: null }));
+            if (renamingFolder?.id === folder.id) {
+                setRenamingFolder(null);
+                setFolderName('');
+            }
             setNotice('Folder deleted and synchronized.');
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : 'Unable to delete the folder.');
@@ -473,7 +489,7 @@ const EagleVaultVault = () => {
 
     const editItem = (item: LoginItem) => {
         const { id: itemId, revision, ...values } = item;
-        void revision;
+        editRevisionRef.current = revision;
         setDraft(values);
         dispatch(navigate({ editingId: itemId, selectedId: itemId, creatingLogin: false, showPassword: false }));
     };
@@ -603,11 +619,17 @@ const EagleVaultVault = () => {
                                 </div>
                                 <form className="eaglevault__folder-form" onSubmit={saveFolder}>
                                     <label>
-                                        New folder
+                                        {renamingFolder ? 'Rename folder' : 'New folder'}
                                         <input value={folderName} onChange={(event) => setFolderName(event.target.value)}
                                             maxLength={100} required />
                                     </label>
-                                    <button type="submit" disabled={busy}>Create</button>
+                                    <button type="submit" disabled={busy}>{renamingFolder ? 'Save name' : 'Create'}</button>
+                                    {renamingFolder && (
+                                        <button type="button" disabled={busy} onClick={() => {
+                                            setRenamingFolder(null);
+                                            setFolderName('');
+                                        }}>Cancel rename</button>
+                                    )}
                                 </form>
                                 <ul className="eaglevault__folder-list" aria-label="Vault folders">
                                     {folders.map((folder) => (
@@ -616,6 +638,10 @@ const EagleVaultVault = () => {
                                                 aria-pressed={activeFolderId === folder.id} onClick={() => openFolder(folder.id)}>
                                                 <PassFolderIcon size={4}/>{folder.name}
                                             </button>
+                                            <button type="button" disabled={busy} onClick={() => {
+                                                setRenamingFolder({ id: folder.id, revision: folder.revision });
+                                                setFolderName(folder.name);
+                                            }} aria-label={`Rename ${folder.name} folder`}>Rename</button>
                                             <button type="button" onClick={() => deleteFolder(folder)} disabled={busy}
                                                 aria-label={`Delete ${folder.name} folder`}>Delete</button>
                                         </li>
