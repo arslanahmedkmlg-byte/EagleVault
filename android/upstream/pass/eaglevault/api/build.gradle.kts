@@ -28,6 +28,7 @@ dependencies {
     if (bitwardenSdkDir != null) {
         implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
         implementation(libs.kotlinx.coroutines.core)
+        implementation(libs.androidx.annotation)
     }
     api(libs.retrofit)
     api(libs.okhttp)
