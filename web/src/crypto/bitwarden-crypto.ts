@@ -62,24 +62,28 @@ export class BitwardenCryptoProvider {
     // TS 6's DOM BufferSource types correctly reject ArrayBufferLike/SharedArrayBuffer.
     const rawMasterKey = new Uint8Array(masterKey.byteLength);
     rawMasterKey.set(masterKey);
-    const key = await crypto.subtle.importKey(
-      "raw",
-      rawMasterKey.buffer,
-      "PBKDF2",
-      false,
-      ["deriveBits"],
-    );
-    const hash = await crypto.subtle.deriveBits(
-      {
-        name: "PBKDF2",
-        hash: "SHA-256",
-        salt: encoder.encode(password),
-        iterations: 1,
-      },
-      key,
-      256,
-    );
-    return toBase64(new Uint8Array(hash));
+    try {
+      const key = await crypto.subtle.importKey(
+        "raw",
+        rawMasterKey.buffer,
+        "PBKDF2",
+        false,
+        ["deriveBits"],
+      );
+      const hash = await crypto.subtle.deriveBits(
+        {
+          name: "PBKDF2",
+          hash: "SHA-256",
+          salt: encoder.encode(password),
+          iterations: 1,
+        },
+        key,
+        256,
+      );
+      return toBase64(new Uint8Array(hash));
+    } finally {
+      rawMasterKey.fill(0);
+    }
   }
 
   generateUserKey(): Uint8Array {

@@ -78,7 +78,9 @@
     font-weight: 400;
 }
 
-.eaglevault__form input {
+.eaglevault__form input,
+.eaglevault__form select,
+.eaglevault__form textarea {
     box-sizing: border-box;
     width: 100%;
     min-height: 48px;
@@ -92,7 +94,9 @@
     font-size: 15px;
 }
 
-.eaglevault__form input:focus {
+.eaglevault__form input:focus,
+.eaglevault__form select:focus,
+.eaglevault__form textarea:focus {
     border-color: var(--ev-accent);
     box-shadow: 0 0 0 3px rgba(139, 131, 255, .16);
 }
@@ -349,4 +353,28 @@
     font: inherit;
     font-size: 10px;
     font-weight: 650;
+}
+
+.eaglevault__form fieldset {
+    display: grid;
+    gap: 14px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-inline-size: 0;
+}
+
+.eaglevault__form textarea {
+    min-height: 88px;
+    padding-block: 10px;
+    resize: vertical;
+}
+
+.eaglevault__form button[type='button'] {
+    min-height: 38px;
+    padding-inline: 12px;
+    border: 1px solid var(--ev-border);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--ev-text);
 }

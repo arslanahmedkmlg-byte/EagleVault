@@ -1,264 +1,135 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 
-import { VaultwardenClient } from '../../../../../../src/api/vaultwarden-client';
-import { loginToVaultwarden } from '../../../../../../src/auth/vaultwarden-password-login';
-import { BitwardenCryptoProvider } from '../../../../../../src/crypto/bitwarden-crypto';
-import { decryptBitwardenCipher, type DecryptedCipher } from '../../../../../../src/crypto/bitwarden-vault-decryptor';
+import { EagleVaultSession, type VaultEntry, type VaultEntryFields } from '../../../../../../src/auth/eaglevault-session';
 import { initializeBitwardenCryptoSdk } from '../../../../../../src/crypto/bitwarden-sdk-loader';
 
 import './EagleVaultApp.scss';
 
-type ConnectionState = {
-    serverUrl: string;
-    email: string;
-    cipherCount: number;
-    folderCount: number;
-    unreadableCount: number;
+const idleTimeout = 5 * 60_000;
+
+const blankEntry: VaultEntryFields = {
+    kind: 'login', name: '', username: '', password: '', url: '', notes: '', folderId: '',
 };
 
-type ItemSummary = {
-    id: string;
-    name: string;
-    type: number;
-    subtitle: string;
-    favorite: boolean;
-};
-
-const DEVICE_STORAGE_KEY = 'eaglevault.web.device-id';
-const CLIENT_ID = 'web';
-const DEVICE_TYPE_UNKNOWN_BROWSER = '14';
-
-const getDeviceIdentifier = (): string => {
-    try {
-        const existing = localStorage.getItem(DEVICE_STORAGE_KEY);
-        if (existing) return existing;
-        const created = crypto.randomUUID();
-        localStorage.setItem(DEVICE_STORAGE_KEY, created);
-        return created;
-    } catch {
-        return crypto.randomUUID();
-    }
-};
-
-const getString = (value: unknown): string => typeof value === 'string' ? value : '';
-
-const getCipherSubtitle = (cipher: DecryptedCipher): string => {
-    const login = cipher.login;
-    const username = isRecord(login) ? getString(login.username) : '';
-    const uris = isRecord(login) && Array.isArray(login.uris) ? login.uris : [];
-    const firstUri = uris.length && isRecord(uris[0]) ? getString(uris[0].uri) : '';
-    return username || firstUri || cipherTypeLabel(cipher.type);
-};
-
-const cipherTypeLabel = (type: number): string => {
-    switch (type) {
-        case 1: return 'Login';
-        case 2: return 'Secure note';
-        case 3: return 'Card';
-        case 4: return 'Identity';
-        case 5: return 'SSH key';
-        default: return 'Other item';
-    }
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-    typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const wipePlaintext = (value: unknown): void => {
-    if (Array.isArray(value)) {
-        for (const entry of value) wipePlaintext(entry);
-    } else if (isRecord(value)) {
-        for (const key of Object.keys(value)) {
-            if (typeof value[key] === 'string') value[key] = '';
-            else wipePlaintext(value[key]);
-        }
-    }
-};
-
-const clearDecryptedItems = (items: DecryptedCipher[]): void => {
-    for (const item of items) {
-        item.name = '';
-        item.notes = '';
-        wipePlaintext(item.login);
-        wipePlaintext(item.secureNote);
-        wipePlaintext(item.card);
-        wipePlaintext(item.identity);
-        wipePlaintext(item.sshKey);
-        wipePlaintext(item.bankAccount);
-        wipePlaintext(item.driversLicense);
-        wipePlaintext(item.passport);
-        wipePlaintext(item.fields);
-        wipePlaintext(item.passwordHistory);
-    }
-    items.length = 0;
-};
-
-type ItemDetail = { label: string; value: string; sensitive?: boolean };
-
-const getItemDetails = (item: DecryptedCipher): ItemDetail[] => {
-    const details: ItemDetail[] = [];
-    const add = (label: string, value: unknown, sensitive = false) => {
-        if (typeof value === 'string' && value.length > 0) details.push({ label, value, sensitive });
-    };
-    const addRecord = (record: Record<string, unknown> | null | undefined, fields: Array<[string, string, boolean?]>) => {
-        if (!record) return;
-        for (const [property, label, sensitive] of fields) add(label, record[property], sensitive);
-    };
-
-    addRecord(item.login, [
-        ['username', 'Username'], ['password', 'Password', true], ['totp', 'Authenticator secret', true],
-    ]);
-    const uris = item.login && Array.isArray(item.login.uris) ? item.login.uris : [];
-    if (uris.length && isRecord(uris[0])) add('Website', uris[0].uri);
-
-    addRecord(item.card, [
-        ['cardholderName', 'Cardholder'], ['brand', 'Card brand'], ['number', 'Card number', true],
-        ['expMonth', 'Expiry month'], ['expYear', 'Expiry year'], ['code', 'Security code', true], ['pin', 'PIN', true],
-    ]);
-    addRecord(item.identity, [
-        ['title', 'Title'], ['firstName', 'First name'], ['middleName', 'Middle name'], ['lastName', 'Last name'],
-        ['address1', 'Address'], ['address2', 'Address line 2'], ['address3', 'Address line 3'],
-        ['city', 'City'], ['state', 'State / province'], ['postalCode', 'Postal code'], ['country', 'Country'],
-        ['company', 'Company'], ['email', 'Email'], ['phone', 'Phone'], ['ssn', 'SSN', true],
-        ['username', 'Username'], ['passportNumber', 'Passport number', true], ['licenseNumber', 'License number', true],
-    ]);
-    addRecord(item.sshKey, [
-        ['publicKey', 'Public key'], ['fingerprint', 'Fingerprint'], ['privateKey', 'Private key', true],
-    ]);
-    addRecord(item.bankAccount, [
-        ['accountName', 'Account name'], ['accountNumber', 'Account number', true],
-        ['routingNumber', 'Routing number', true], ['swiftCode', 'SWIFT'], ['iban', 'IBAN', true],
-        ['bic', 'BIC'], ['sortCode', 'Sort code'], ['accountType', 'Account type'],
-        ['bankName', 'Bank'], ['branchName', 'Branch'], ['accountOwner', 'Account owner'], ['country', 'Country'],
-    ]);
-    addRecord(item.driversLicense, [
-        ['number', 'License number', true], ['issuedDate', 'Issued'], ['expirationDate', 'Expires'],
-        ['issuedBy', 'Issued by'], ['category', 'Category'], ['country', 'Country'], ['state', 'State'],
-        ['licenseClass', 'Class'], ['endorsements', 'Endorsements'], ['restrictions', 'Restrictions'],
-    ]);
-    addRecord(item.passport, [
-        ['number', 'Passport number', true], ['country', 'Country'], ['issueDate', 'Issued'],
-        ['expirationDate', 'Expires'], ['placeOfIssue', 'Place of issue'], ['type', 'Type'],
-        ['name', 'Name'], ['dateOfBirth', 'Date of birth'], ['issuingAuthority', 'Issuing authority'],
-    ]);
-    for (const field of item.fields ?? []) {
-        add(getString(field.name) || 'Custom field', field.value, field.type === 1);
-    }
-    return details;
+const generatePassword = () => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    return Array.from(crypto.getRandomValues(new Uint8Array(24)), (byte) => alphabet[byte & 63]).join('');
 };
 
 export const EagleVaultApp = () => {
-    const [serverUrl, setServerUrl] = useState('');
+    const [origin, setOrigin] = useState('');
     const [email, setEmail] = useState('');
     const [masterPassword, setMasterPassword] = useState('');
-    const [twoFactorToken, setTwoFactorToken] = useState('');
+    const [registrationCode, setRegistrationCode] = useState('');
+    const [creatingAccount, setCreatingAccount] = useState(false);
+    const [unlocked, setUnlocked] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
-    const [connection, setConnection] = useState<ConnectionState | null>(null);
-    const [items, setItems] = useState<ItemSummary[]>([]);
-    const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-    const [showSensitive, setShowSensitive] = useState(false);
+    const [entries, setEntries] = useState<VaultEntry[]>([]);
+    const [search, setSearch] = useState('');
+    const [folder, setFolder] = useState('');
+    const [draft, setDraft] = useState<VaultEntryFields | null>(null);
+    const [previous, setPrevious] = useState<VaultEntry>();
+    const [showPassword, setShowPassword] = useState(false);
+    const session = useRef<EagleVaultSession | null>(null);
 
-    const clientRef = useRef<VaultwardenClient | null>(null);
-    const userKeyRef = useRef<Uint8Array | null>(null);
-    const decryptedCiphersRef = useRef<DecryptedCipher[]>([]);
-
-    const clearSession = () => {
-        userKeyRef.current?.fill(0);
-        userKeyRef.current = null;
-        clientRef.current = null;
-        clearDecryptedItems(decryptedCiphersRef.current);
-        decryptedCiphersRef.current = [];
-        for (const item of items) {
-            item.name = '';
-            item.subtitle = '';
-        }
-        setItems([]);
-        setSelectedItemId(null);
-        setShowSensitive(false);
-        setConnection(null);
-    };
+    useEffect(() => () => {
+        const active = session.current;
+        session.current = null;
+        void active?.lock().catch(() => {});
+    }, []);
 
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        if (session.current) return;
         setBusy(true);
         setError('');
-        clearSession();
-
+        let active: EagleVaultSession | null = null;
         try {
+            active = new EagleVaultSession(origin.trim());
+            session.current = active;
             await initializeBitwardenCryptoSdk();
-            const normalizedServerUrl = new URL(serverUrl.trim()).toString().replace(/\/$/, '');
-            const cryptoProvider = new BitwardenCryptoProvider();
-            const tokens = await loginToVaultwarden({
-                serverUrl: normalizedServerUrl,
-                email,
-                masterPassword,
-                clientId: CLIENT_ID,
-                deviceIdentifier: getDeviceIdentifier(),
-                deviceName: 'EagleVault Web',
-                deviceType: DEVICE_TYPE_UNKNOWN_BROWSER,
-                twoFactorToken: twoFactorToken.trim() || undefined,
-                twoFactorProvider: twoFactorToken.trim() ? 0 : undefined,
-            }, cryptoProvider);
-
-            userKeyRef.current = tokens.userKey;
-            // The client and decrypted user key remain in memory only.
-            const accessToken = tokens.access_token;
-            const client = new VaultwardenClient({
-                serverUrl: normalizedServerUrl,
-                accessToken: async () => accessToken,
-            });
-            clientRef.current = client;
-
-            const [sync, folders] = await Promise.all([client.sync(), client.listFolders()]);
-            const activeCiphers = (sync.ciphers ?? []).filter((cipher) => !cipher.deletedDate);
-            const decrypted: DecryptedCipher[] = [];
-            let unreadableCount = 0;
-
-            for (const cipher of activeCiphers) {
-                try {
-                    decrypted.push(decryptBitwardenCipher(cipher, tokens.userKey, cryptoProvider));
-                } catch {
-                    // Keep unsupported organization/legacy items encrypted and out of the UI.
-                    unreadableCount += 1;
-                }
-            }
-
-            decryptedCiphersRef.current = decrypted;
-            setItems(decrypted.map((cipher) => ({
-                id: cipher.id,
-                name: cipher.name || 'Untitled item',
-                type: cipher.type,
-                subtitle: getCipherSubtitle(cipher),
-                favorite: cipher.favorite,
-            })));
-            setConnection({
-                serverUrl: normalizedServerUrl,
-                email: email.trim().toLowerCase(),
-                cipherCount: decrypted.length,
-                folderCount: folders.data.length,
-                unreadableCount,
-            });
-        } catch (cause) {
-            clearSession();
-            setError(cause instanceof Error ? cause.message : 'Unable to sign in to this Vaultwarden server.');
+            await active.unlock(email, masterPassword, creatingAccount ? registrationCode : undefined);
+            const loaded = await active.sync();
+            if (session.current !== active) return;
+            setEntries(loaded);
+            setUnlocked(true);
+        } catch {
+            if (session.current === active) session.current = null;
+            setError('Unable to unlock the vault. Check the API origin and your account details.');
         } finally {
+            if (active && session.current !== active) await active.lock().catch(() => {});
             setMasterPassword('');
-            setTwoFactorToken('');
+            setRegistrationCode('');
             setBusy(false);
         }
     };
 
-    const signOut = () => {
-        clearSession();
-        setTwoFactorToken('');
-        setError('');
+    const clearEditor = () => {
+        setDraft(null);
+        setPrevious(undefined);
+        setShowPassword(false);
     };
 
-    const selectedItem = selectedItemId
-        ? decryptedCiphersRef.current.find((item) => item.id === selectedItemId)
-        : undefined;
-    const selectedDetails = selectedItem ? getItemDetails(selectedItem) : [];
+    const lock = useCallback(() => {
+        const active = session.current;
+        session.current = null;
+        setEntries([]);
+        setSearch('');
+        setFolder('');
+        setError('');
+        setUnlocked(false);
+        setDraft(null);
+        setPrevious(undefined);
+        setShowPassword(false);
+        void active?.lock().catch(() => {
+            if (!session.current) setError('Vault locked. The server could not confirm session revocation.');
+        });
+    }, []);
+
+    useEffect(() => {
+        if (!unlocked) return;
+        let timer: number;
+        const resetTimer = () => {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(lock, idleTimeout);
+        };
+        resetTimer();
+        window.addEventListener('pointerdown', resetTimer);
+        window.addEventListener('keydown', resetTimer);
+        window.addEventListener('pagehide', lock);
+        return () => {
+            window.clearTimeout(timer);
+            window.removeEventListener('pointerdown', resetTimer);
+            window.removeEventListener('keydown', resetTimer);
+            window.removeEventListener('pagehide', lock);
+        };
+    }, [lock, unlocked]);
+
+    const perform = async (operation?: (active: EagleVaultSession) => Promise<void>) => {
+        const active = session.current;
+        if (!active || busy) return;
+        setBusy(true);
+        setError('');
+        try {
+            if (operation) {
+                await operation(active);
+                if (session.current === active) clearEditor();
+            }
+            const loaded = await active.sync();
+            if (session.current === active) setEntries(loaded);
+        } catch {
+            if (session.current === active) setError('Unable to complete the operation. Sync before retrying.');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const folders = entries.filter((entry) => entry.kind === 'folder');
+    const visible = entries.filter((entry) =>
+        (!folder || entry.folderId === folder) &&
+        entry.name.toLowerCase().includes(search.trim().toLowerCase())
+    );
 
     return (
         <main className="eaglevault">
@@ -268,104 +139,129 @@ export const EagleVaultApp = () => {
                     <span>EagleVault</span>
                 </div>
 
-                {connection ? (
-                    <div className="eaglevault__connected">
-                        <div className="eaglevault__status" role="status">Vault unlocked</div>
-                        <h1>Your vault is ready.</h1>
-                        <p className="eaglevault__muted">{connection.email} · {new URL(connection.serverUrl).host}</p>
-                        <div className="eaglevault__stats">
-                            <div><strong>{connection.cipherCount}</strong><span>Decrypted items</span></div>
-                            <div><strong>{connection.folderCount}</strong><span>Folders</span></div>
-                        </div>
-                        {connection.unreadableCount > 0 && (
-                            <p className="eaglevault__warning" role="status">
-                                {connection.unreadableCount} item(s) could not be decrypted. Organization-key
-                                items and unsupported formats are not displayed.
-                            </p>
-                        )}
-                        <div className="eaglevault__items" aria-label="Vault items">
-                            {items.length === 0 ? (
-                                <p className="eaglevault__muted">No supported items found.</p>
-                            ) : items.map((item) => (
-                                <button
-                                    className={'eaglevault__item' + (selectedItemId === item.id ? ' is-selected' : '')}
-                                    key={item.id}
-                                    type="button"
-                                    onClick={() => {
-                                        setSelectedItemId(item.id);
-                                        setShowSensitive(false);
-                                    }}
-                                >
-                                    <span className="eaglevault__item-title">
-                                        {item.favorite ? '★ ' : ''}{item.name}
-                                    </span>
-                                    <span className="eaglevault__item-subtitle">{item.subtitle}</span>
-                                    <span className="eaglevault__item-type">{cipherTypeLabel(item.type)}</span>
-                                </button>
-                            ))}
-                        </div>
-                        {selectedItem && (
-                            <div className="eaglevault__details">
-                                <div className="eaglevault__details-heading">
-                                    <h2>{selectedItem.name}</h2>
-                                    <span>{cipherTypeLabel(selectedItem.type)}</span>
-                                </div>
-                                {selectedDetails.map((detail, index) => (
-                                    <div className="eaglevault__detail-row" key={detail.label + index}>
-                                        <span>{detail.label}</span>
-                                        <strong>{detail.sensitive && !showSensitive ? '••••••••' : detail.value}</strong>
-                                        {detail.sensitive && (
-                                            <button type="button" onClick={() => setShowSensitive((visible) => !visible)}>
-                                                {showSensitive ? 'Hide' : 'Reveal'}
-                                            </button>
-                                        )}
-                                    </div>
-                                ))}
-                                {selectedItem.notes && <p className="eaglevault__notes">{selectedItem.notes}</p>}
-                            </div>
-                        )}
-                        <p className="eaglevault__notice">
-                            Item names and supported fields are decrypted locally with the Bitwarden SDK.
-                            Passwords stay hidden until selected. The access token and user key remain in
-                            memory only and are cleared on sign-out or page reload.
-                        </p>
-                        <button className="eaglevault__button" type="button" onClick={signOut}>Sign out</button>
-                    </div>
-                ) : (
+                {error && <p className="eaglevault__error" role="alert">{error}</p>}
+                {!unlocked ? (
                     <>
-                        <h1>Unlock your vault</h1>
-                        <p className="eaglevault__muted">Connect to your Bitwarden-compatible server.</p>
-                        <form onSubmit={submit} className="eaglevault__form">
-                            <label>
-                                Server URL
-                                <input type="url" required autoComplete="url" placeholder="https://vault.example.com"
-                                    value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} />
+                        <h1>{creatingAccount ? 'Create your vault' : 'Unlock your vault'}</h1>
+                        <form className="eaglevault__form" onSubmit={submit}>
+                            <label>API origin
+                                <input type="url" required value={origin} onChange={(event) => setOrigin(event.target.value)} />
                             </label>
-                            <label>
-                                Email address
+                            <label>Email address
                                 <input type="email" required autoComplete="username" value={email}
                                     onChange={(event) => setEmail(event.target.value)} />
                             </label>
-                            <label>
-                                Master password
-                                <input type="password" required autoComplete="current-password" value={masterPassword}
+                            <label>Master password
+                                <input type="password" required autoComplete={creatingAccount ? 'new-password' : 'current-password'}
+                                    minLength={creatingAccount ? 12 : undefined} value={masterPassword}
                                     onChange={(event) => setMasterPassword(event.target.value)} />
                             </label>
-                            <label>
-                                Authenticator app code <span>(optional)</span>
-                                <input inputMode="numeric" autoComplete="one-time-code" value={twoFactorToken}
-                                    onChange={(event) => setTwoFactorToken(event.target.value)} />
-                            </label>
-                            {error && <p className="eaglevault__error" role="alert">{error}</p>}
-                            <button className="eaglevault__button" type="submit" disabled={busy}>
-                                {busy ? 'Connecting…' : 'Sign in'}
+                            {creatingAccount && <label>Registration code
+                                <input type="password" required autoComplete="off" value={registrationCode}
+                                    onChange={(event) => setRegistrationCode(event.target.value)} />
+                            </label>}
+                            <button className="eaglevault__button" disabled={busy} type="submit">
+                                {busy ? 'Connecting…' : creatingAccount ? 'Create account' : 'Unlock'}
+                            </button>
+                            <button type="button" disabled={busy} onClick={() => setCreatingAccount(!creatingAccount)}>
+                                {creatingAccount ? 'Use an existing account' : 'Create an account'}
                             </button>
                         </form>
-                        <p className="eaglevault__footnote">
-                            Credentials are sent only to the server URL you enter. The master password is used
-                            locally to derive the Bitwarden-compatible authentication hash.
-                        </p>
                     </>
+                ) : (
+                    <div className="eaglevault__connected">
+                        <h1>Your vault</h1>
+                        <div className="eaglevault__form">
+                            <label>Search items
+                                <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} />
+                            </label>
+                            <label>Folder
+                                <select value={folder} onChange={(event) => setFolder(event.target.value)}>
+                                    <option value="">All folders</option>
+                                    {folders.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                                </select>
+                            </label>
+                            <button type="button" disabled={busy} onClick={() => {
+                                clearEditor();
+                                setDraft({ ...blankEntry, folderId: folder });
+                            }}>New item</button>
+                            <button type="button" disabled={busy} onClick={() => void perform()}>Sync</button>
+                            <button type="button" onClick={lock}>Lock and sign out</button>
+                        </div>
+                        <div className="eaglevault__items" aria-label="Vault items">
+                            {visible.length === 0 && <p className="eaglevault__muted">No items found.</p>}
+                            {visible.map((entry) => (
+                                <button className="eaglevault__item" key={entry.id} type="button" disabled={busy}
+                                    onClick={() => {
+                                        const { id, revision, ...fields } = entry;
+                                        setPrevious({ id, revision, ...fields });
+                                        setDraft(fields);
+                                        setShowPassword(false);
+                                    }}>
+                                    <span className="eaglevault__item-title">{entry.name}</span>
+                                    <span className="eaglevault__item-subtitle">{entry.username || entry.kind}</span>
+                                </button>
+                            ))}
+                        </div>
+
+                        {draft && <form className="eaglevault__form" onSubmit={(event) => {
+                            event.preventDefault();
+                            const fields = draft.kind === 'login' ? draft : {
+                                ...blankEntry, kind: draft.kind, name: draft.name,
+                                notes: draft.kind === 'note' ? draft.notes : '',
+                                folderId: draft.kind === 'note' ? draft.folderId : '',
+                            };
+                            void perform((active) => active.save(fields, previous));
+                        }}>
+                            <h2>{previous ? 'Edit item' : 'New item'}</h2>
+                            <fieldset disabled={busy}>
+                                <label>Type
+                                    <select disabled={!!previous} value={draft.kind}
+                                        onChange={(event) => setDraft({ ...draft, kind: event.target.value as VaultEntryFields['kind'] })}>
+                                        <option value="login">Login</option>
+                                        <option value="note">Secure note</option>
+                                        <option value="folder">Folder</option>
+                                    </select>
+                                </label>
+                                <label>Title
+                                    <input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+                                </label>
+                                {draft.kind === 'login' && <>
+                                    <label>Username
+                                        <input value={draft.username} autoComplete="off"
+                                            onChange={(event) => setDraft({ ...draft, username: event.target.value })} />
+                                    </label>
+                                    <label>Password
+                                        <input type={showPassword ? 'text' : 'password'} autoComplete="new-password" value={draft.password}
+                                            onChange={(event) => setDraft({ ...draft, password: event.target.value })} />
+                                    </label>
+                                    <button type="button" onClick={() => setShowPassword(!showPassword)}>
+                                        {showPassword ? 'Hide password' : 'Show password'}
+                                    </button>
+                                    <button type="button" onClick={() => setDraft({ ...draft, password: generatePassword() })}>Generate password</button>
+                                    <label>Website
+                                        <input value={draft.url} onChange={(event) => setDraft({ ...draft, url: event.target.value })} />
+                                    </label>
+                                </>}
+                                {draft.kind !== 'folder' && <>
+                                    <label>Notes
+                                        <textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} />
+                                    </label>
+                                    <label>Folder
+                                        <select value={draft.folderId} onChange={(event) => setDraft({ ...draft, folderId: event.target.value })}>
+                                            <option value="">No folder</option>
+                                            {folders.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                                        </select>
+                                    </label>
+                                </>}
+                                <button className="eaglevault__button" type="submit">Save</button>
+                                <button type="button" onClick={clearEditor}>Cancel</button>
+                                {previous && <button type="button" onClick={() => {
+                                    if (window.confirm('Delete this item from your vault?')) void perform((active) => active.delete(previous));
+                                }}>Delete</button>}
+                            </fieldset>
+                        </form>}
+                    </div>
                 )}
             </section>
         </main>

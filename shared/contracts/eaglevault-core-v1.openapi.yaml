@@ -1,0 +1,180 @@
+openapi: 3.1.0
+info:
+  title: EagleVault Core synthetic staging
+  version: 1.0.0-draft
+paths:
+  /v1/auth/kdf:
+    get:
+      operationId: readKdfProfile
+      responses:
+        '200':
+          description: Fixed Argon2id profile
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [type, iterations, memory, parallelism]
+                properties:
+                  type: { const: argon2id }
+                  iterations: { const: 3 }
+                  memory: { const: 64 }
+                  parallelism: { const: 4 }
+  /v1/auth/register:
+    post:
+      operationId: registerAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, proof, wrappedKey, registrationCode]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                proof: { $ref: '#/components/schemas/Proof' }
+                wrappedKey: { type: string, description: Bitwarden SDK wrapped 64-byte user key }
+                registrationCode: { type: string }
+      responses:
+        '201': { description: Account created }
+        '403': { description: Registration unavailable }
+        '409': { description: Account already exists }
+  /v1/auth/login:
+    post:
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, proof]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                proof: { $ref: '#/components/schemas/Proof' }
+      responses:
+        '200':
+          description: Session and wrapped user key
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Session'
+                  - type: object
+                    required: [wrappedKey]
+                    properties:
+                      wrappedKey: { type: string }
+        '401': { description: Credentials rejected }
+        '409': { description: Active session limit reached }
+        '429': { description: Account attempt limit reached }
+  /v1/auth/refresh:
+    post:
+      operationId: refreshSession
+      requestBody: { $ref: '#/components/requestBodies/RefreshToken' }
+      responses:
+        '200':
+          description: Replaced access and refresh tokens
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401': { description: Token invalid, expired or already used }
+  /v1/auth/logout:
+    post:
+      operationId: revokeSession
+      requestBody: { $ref: '#/components/requestBodies/RefreshToken' }
+      responses:
+        '200': { description: Session absent or revoked }
+        '401': { description: Token invalid }
+  /v1/vault/sync:
+    get:
+      operationId: syncVault
+      security: [{ bearerToken: [] }]
+      parameters:
+        - { name: after, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: Current record states after the cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [records, cursor, hasMore]
+                properties:
+                  records:
+                    type: array
+                    items: { $ref: '#/components/schemas/Record' }
+                  cursor: { type: integer, minimum: 0 }
+                  hasMore: { type: boolean }
+        '401': { description: Access token required }
+  /v1/vault/records/{id}:
+    put:
+      operationId: writeVaultRecord
+      security: [{ bearerToken: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ciphertext, expectedRevision]
+              properties:
+                ciphertext: { $ref: '#/components/schemas/Ciphertext' }
+                expectedRevision: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: Mutation saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WriteResult' }
+        '401': { description: Access token required }
+        '409':
+          description: Previous revision does not match or ID is reserved by a tombstone
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WriteResult' }
+components:
+  securitySchemes:
+    bearerToken: { type: http, scheme: bearer }
+  requestBodies:
+    RefreshToken:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [refreshToken]
+            properties:
+              refreshToken: { type: string }
+  schemas:
+    Proof:
+      type: string
+      description: Base64-encoded 32-byte Bitwarden legacy authentication hash
+    Session:
+      type: object
+      required: [accessToken, refreshToken, expiresAt]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresAt: { type: integer, description: Access expiry in Unix milliseconds }
+    Ciphertext:
+      type: [string, 'null']
+      description: SDK EncString of at most 65536 UTF-8 bytes, or null for a tombstone
+    Record:
+      type: object
+      required: [id, ciphertext, revision]
+      properties:
+        id: { type: string, format: uuid }
+        ciphertext: { $ref: '#/components/schemas/Ciphertext' }
+        revision: { type: integer, minimum: 1 }
+    WriteResult:
+      type: object
+      required: [status, revision]
+      properties:
+        status: { enum: [saved, conflict] }
+        revision: { type: integer, minimum: 0 }

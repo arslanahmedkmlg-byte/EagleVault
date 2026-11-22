@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
@@ -20,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -94,7 +96,7 @@ class CoreVaultActivity : ComponentActivity() {
                             field("Name", item.name, { draft = item.copy(name = it) })
                             if (item.kind == "login") {
                                 field("Username", item.username, { draft = item.copy(username = it) })
-                                field("Password", item.password, { draft = item.copy(password = it) }, secret = !reveal)
+                                field("Password", item.password, { draft = item.copy(password = it) }, secret = true, visible = reveal)
                                 TextButton(enabled = !busy, onClick = { reveal = !reveal }) {
                                     Text(if (reveal) "Hide password" else "Reveal password")
                                 }
@@ -140,14 +142,15 @@ class CoreVaultActivity : ComponentActivity() {
     }
 
     @androidx.compose.runtime.Composable
-    private fun field(label: String, value: String, update: (String) -> Unit, secret: Boolean = false) {
+    private fun field(label: String, value: String, update: (String) -> Unit, secret: Boolean = false, visible: Boolean = false) {
         OutlinedTextField(
             value = value,
             onValueChange = update,
             enabled = !busy,
             label = { Text(label) },
             singleLine = label != "Notes",
-            visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
+            keyboardOptions = if (secret) KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false) else KeyboardOptions.Default,
+            visualTransformation = if (secret && !visible) PasswordVisualTransformation() else VisualTransformation.None,
             modifier = Modifier.fillMaxWidth(),
         )
     }

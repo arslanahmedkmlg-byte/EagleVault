@@ -22,8 +22,8 @@ import java.time.Instant
 import java.util.Locale
 import java.util.UUID
 
-class CoreVaultSession(origin: String) {
-    private val api = EagleVaultApi.create(origin)
+class CoreVaultSession internal constructor(private val api: EagleVaultApi) {
+    constructor(origin: String) : this(EagleVaultApi.create(origin))
     private var client: Client? = null
     private var tokens: Tokens? = null
 

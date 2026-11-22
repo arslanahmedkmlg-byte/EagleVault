@@ -17,9 +17,11 @@ android {
             java.srcDirs(kotlin, "src/bitwarden/kotlin")
             jniLibs.srcDir(native)
         }
+        sourceSets.getByName("androidTest").java.srcDir("src/bitwardenTest/kotlin")
     }
 
     defaultConfig {
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = libs.versions.minSdk.get().toInt()
     }
 }
@@ -29,6 +31,8 @@ dependencies {
         implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
         implementation(libs.kotlinx.coroutines.core)
         implementation(libs.androidx.annotation)
+        androidTestImplementation(libs.androidx.test.runner)
+        androidTestImplementation(libs.androidx.test.junit)
     }
     api(libs.retrofit)
     api(libs.okhttp)
