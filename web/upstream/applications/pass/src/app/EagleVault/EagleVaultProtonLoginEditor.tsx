@@ -70,6 +70,12 @@ export function EagleVaultProtonLoginEditor({
                     title={<h2>{editing ? 'Edit login' : 'New login'}</h2>}
                     subtitle={<span className="eaglevault__muted">Encrypted login item</span>}
                 />
+                <div className="eaglevault__inline-actions">
+                    <Button type="submit" color="norm" shape="solid" disabled={busy || form.isSubmitting || !form.isValid}>
+                        {busy || form.isSubmitting ? 'Saving…' : editing ? 'Save changes' : 'Create login'}
+                    </Button>
+                    <Button type="button" color="weak" shape="ghost" disabled={busy} onClick={onCancel}>Cancel</Button>
+                </div>
                 <FieldsetCluster>
                     <Field component={TitleField} name="name" label="Title" placeholder="Name your login"
                         maxLength={256} />
@@ -96,12 +102,6 @@ export function EagleVaultProtonLoginEditor({
                         {folderOptions.map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
                     </select>
                 </label>
-                <div className="eaglevault__inline-actions">
-                    <Button type="submit" color="norm" shape="solid" disabled={busy || form.isSubmitting || !form.isValid}>
-                        {busy || form.isSubmitting ? 'Saving…' : editing ? 'Save changes' : 'Create login'}
-                    </Button>
-                    <Button type="button" color="weak" shape="ghost" disabled={busy} onClick={onCancel}>Cancel</Button>
-                </div>
             </Form>
         </FormikProvider>
     );

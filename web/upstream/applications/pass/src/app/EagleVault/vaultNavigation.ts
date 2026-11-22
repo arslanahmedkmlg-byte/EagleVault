@@ -7,6 +7,7 @@ type VaultNavigation = {
     folderFilter: string | null;
     selectedId: string | null;
     editingId: string | null;
+    creatingLogin: boolean;
     showPassword: boolean;
 };
 
@@ -17,6 +18,7 @@ const initialState: VaultNavigation = {
     folderFilter: null,
     selectedId: null,
     editingId: null,
+    creatingLogin: false,
     showPassword: false,
 };
 

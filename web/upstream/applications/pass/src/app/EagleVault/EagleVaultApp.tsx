@@ -92,7 +92,7 @@ const wipeFolder = (folder: VaultFolder): void => {
 
 const EagleVaultVault = () => {
     const dispatch = useDispatch<VaultNavigationStore['dispatch']>();
-    const { settingsOpen, screen, mobileView, folderFilter, selectedId, editingId, showPassword } =
+    const { settingsOpen, screen, mobileView, folderFilter, selectedId, editingId, creatingLogin, showPassword } =
         useSelector((state: ReturnType<VaultNavigationStore['getState']>) => state);
 
     const [authMode, setAuthMode] = useState<AuthMode>('login');
@@ -327,7 +327,7 @@ const EagleVaultVault = () => {
                 ? itemsRef.current.map((item) => item.id === itemId ? saved : item)
                 : [...itemsRef.current, saved];
             replaceVault(next, [...foldersRef.current]);
-            dispatch(navigate({ selectedId: itemId, editingId: null }));
+            dispatch(navigate({ selectedId: itemId, editingId: null, creatingLogin: false }));
             setDraft(emptyDraft());
             setNotice(existing ? 'Login updated and synchronized.' : 'Login saved and synchronized.');
         } catch (cause) {
@@ -446,7 +446,7 @@ const EagleVaultVault = () => {
     const activeFolder = folders.find((folder) => folder.id === folderFilter);
     const activeFolderId = activeFolder?.id;
     const openFolder = (folderId: string | null) => {
-        dispatch(navigate({ folderFilter: folderId, selectedId: null, editingId: null, showPassword: false }));
+        dispatch(navigate({ folderFilter: folderId, selectedId: null, editingId: null, creatingLogin: false, showPassword: false }));
         setDraft({ ...emptyDraft(), folderId: folderId ?? '' });
         dispatch(navigate({ mobileView: 'list' }));
     };
@@ -463,9 +463,10 @@ const EagleVaultVault = () => {
         filteredItems.map((item) => ({ item, presentation: presentEagleVaultLogin(item) })),
     [filteredItems]);
     const selectedItem = items.find((item) => item.id === selectedId);
+    const editorOpen = creatingLogin || (editingId !== null && selectedItem?.id === editingId);
 
     const openNewLogin = () => {
-        dispatch(navigate({ selectedId: null, editingId: null, showPassword: false }));
+        dispatch(navigate({ selectedId: null, editingId: null, creatingLogin: true, showPassword: false }));
         setDraft({ ...emptyDraft(), folderId: activeFolderId ?? '' });
         dispatch(navigate({ mobileView: 'detail' }));
     };
@@ -474,7 +475,7 @@ const EagleVaultVault = () => {
         const { id: itemId, revision, ...values } = item;
         void revision;
         setDraft(values);
-        dispatch(navigate({ editingId: itemId, selectedId: itemId, showPassword: false }));
+        dispatch(navigate({ editingId: itemId, selectedId: itemId, creatingLogin: false, showPassword: false }));
     };
 
     const lock = () => {
@@ -539,7 +540,9 @@ const EagleVaultVault = () => {
                             <button type="button" className={mobileView === 'list' ? 'is-active' : ''}
                                 onClick={() => dispatch(navigate({ mobileView: 'list' }))}>{activeFolder?.name ?? 'All items'}</button>
                             <button type="button" className={mobileView === 'detail' ? 'is-active' : ''}
-                                onClick={() => dispatch(navigate({ mobileView: 'detail' }))}>{editingId ? 'Edit login' : selectedItem ? 'Details' : 'New login'}</button>
+                                onClick={selectedItem || editorOpen ? () => dispatch(navigate({ mobileView: 'detail' })) : openNewLogin}>
+                                {editingId && editorOpen ? 'Edit login' : selectedItem ? 'Details' : 'New login'}
+                            </button>
                         </div>
                         <div className={'eaglevault__workspace eaglevault__workspace--' + mobileView}>
                             <nav className="eaglevault__primary-sidebar" aria-label="Vault sections">
@@ -578,7 +581,7 @@ const EagleVaultVault = () => {
                                 </button>
                                 <div className="eaglevault__items" aria-label="Vault logins">
                                     {filteredItems.length === 0
-                                        ? <p className="eaglevault__muted">No matching logins.</p>
+                                        ? <p className="eaglevault__muted">{query.trim() ? 'No matching logins.' : 'No logins yet.'}</p>
                                         : protonListRows.map(({ item, presentation }) => (
                                             <ButtonLike
                                                 as="button"
@@ -587,7 +590,7 @@ const EagleVaultVault = () => {
                                                 type="button"
                                                 shape="ghost"
                                                 color="weak"
-                                                onClick={() => { dispatch(navigate({ selectedId: item.id, editingId: null, showPassword: false, mobileView: 'detail' })); }}
+                                                onClick={() => { dispatch(navigate({ selectedId: item.id, editingId: null, creatingLogin: false, showPassword: false, mobileView: 'detail' })); }}
                                             >
                                                 <IconBox mode="icon" pill size={5} className="eaglevault__login-icon">
                                                     <IcUser size={4}/>
@@ -621,7 +624,7 @@ const EagleVaultVault = () => {
                             </section>
 
                             <section className="eaglevault__vault-detail">
-                                {selectedItem && !editingId ? (
+                                {selectedItem && !editorOpen ? (
                                     <>
                                         <div className="eaglevault__details-heading">
                                             <PanelHeader
@@ -648,7 +651,7 @@ const EagleVaultVault = () => {
                                         </div>
                                         {selectedItem.notes && <p className="eaglevault__notes">{selectedItem.notes}</p>}
                                     </>
-                                ) : (
+                                ) : editorOpen ? (
                                     <EagleVaultProtonLoginEditor
                                         key={editingId ?? 'create'}
                                         initialValues={draft}
@@ -658,11 +661,14 @@ const EagleVaultVault = () => {
                                         onSave={saveItem}
                                         onGeneratePassword={generatePassword}
                                         onCancel={() => {
-                                            dispatch(navigate({ editingId: null }));
+                                            dispatch(navigate({ editingId: null, creatingLogin: false, mobileView: 'list' }));
                                             setDraft(emptyDraft());
-                                            dispatch(navigate({ mobileView: 'list' }));
                                         }}
                                     />
+                                ) : (
+                                    <p className="eaglevault__muted">
+                                        {items.length ? 'Select a login to view it.' : 'Add a login to get started.'}
+                                    </p>
                                 )}
                             </section>
                         </div>
